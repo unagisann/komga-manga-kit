@@ -13,10 +13,11 @@ class Feature:
 
 
 def built_in_features() -> list[Feature]:
-    from .web import home, library, metadata, organize, roadmap, settings
+    from .web import home, jobs, library, metadata, organize, roadmap, settings
     return [Feature("home", "ホーム", "home.index", "home", home),
             Feature("library", "蔵書", "library.index", "book", library),
             Feature("organize", "蔵書整理", "organize.index", "folder", organize),
             Feature("metadata", "メタデータ", "metadata.index", "tag", metadata),
+            Feature("jobs", "処理履歴", "jobs.index", "refresh", jobs),
             Feature("settings", "設定", "settings.index", "sliders", settings),
             Feature("roadmap", "ロードマップ", "roadmap.index", "route", roadmap)]

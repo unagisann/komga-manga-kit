@@ -45,6 +45,7 @@ class KomgaClient:
 
     def series(self, page=0, size=50):
         result = self.get("/api/v1/series", page=page, size=size)
-        if not isinstance(result, dict) or not isinstance(result.get("content"), list):
+        if (not isinstance(result, dict) or not isinstance(result.get("content"), list)
+                or any(not isinstance(entry, dict) for entry in result["content"])):
             raise KomgaError("Komgaの作品応答形式が想定と異なります。")
         return result

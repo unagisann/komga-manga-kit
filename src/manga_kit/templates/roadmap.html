@@ -2,6 +2,7 @@
 {% block title %}ロードマップ{% endblock %}
 {% block content %}
 <div class="page-heading"><div><p class="eyebrow">ROADMAP</p><h1>整理から、漫画ポータルへ</h1><p>使える基盤を先につくり、機能と導入のしやすさを育てていきます。</p></div><span class="badge">v0.1 開発中</span></div>
+<div class="notice">第1段階を実装済み：処理履歴の保存、読み・作品情報の手動編集と差分確認、Komgaのパス対応付け。書庫変換・移動・Komgaへの反映は次の段階で検証します。</div>
 <section class="roadmap-grid">
   <article class="panel milestone current"><p class="eyebrow">v0.1</p><h2>蔵書整理と<br>日本語メタデータ</h2><p>ローカルの漫画を整理し、Komgaで読める形に。</p><ul class="milestone-list"><li class="done">{{ ui.icon('check', 16) }}Komgaの接続確認・作品一覧API</li><li class="done">{{ ui.icon('check', 16) }}保存先・階層・命名の共通設定</li><li class="done">{{ ui.icon('check', 16) }}蔵書検索・五十音分類</li><li class="done">{{ ui.icon('check', 16) }}ComicInfo / series.json 読み取り</li><li class="done">{{ ui.icon('check', 16) }}整理プレビュー・衝突検出</li><li>CBZ変換・整理の実行と復元</li><li>楽天・AniList等の日本語情報補完</li><li>読み生成・メタデータの反映</li><li>新刊・予約巻チェック</li><li>完結移動時の既読情報引き継ぎ</li></ul><span class="chip ongoing">基盤を実装済み</span></article>
   <article class="panel milestone"><p class="eyebrow">v0.2</p><h2>日本の漫画を<br>楽しむポータル</h2><p>持っている漫画と、次に読みたい漫画をつなぐ。</p><ul class="milestone-list"><li>発見ページと作品記事</li><li>今期アニメと原作・所持作品の照合</li><li>ランキングと受賞作品の照合</li><li>Komgaのスマート本棚</li><li>完結作品の一気読み候補</li><li>表紙・ページ順の修正画面</li></ul><span class="chip">計画中</span></article>

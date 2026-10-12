@@ -21,8 +21,11 @@ class ApplicationTests(unittest.TestCase):
         env = patch.dict(os.environ, {}, clear=True)
         env.start()
         self.addCleanup(env.stop)
-        self.settings = Settings()
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.settings = Settings(data_root=Path(temp.name) / 'state')
         self.app = create_app(settings=self.settings)
+        self.addCleanup(self.app.extensions['jobs'].shutdown)
         self.app.testing = True
         self.client = self.app.test_client()
 

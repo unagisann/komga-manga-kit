@@ -10,6 +10,9 @@ compose.local.yaml
 var/
 .coverage
 .pytest_cache/
+*.sqlite3*
+*.sqlite*
+*.db
 *.cbz
 *.cbr
 *.rar

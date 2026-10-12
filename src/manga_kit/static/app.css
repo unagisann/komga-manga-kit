@@ -982,6 +982,45 @@ select {
   width:100%;
 }
 
+.rule-panel textarea {
+  width:100%;
+  padding:10px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--surface);
+  color:var(--text);
+  font:inherit;
+  resize:vertical;
+}
+
+.editor-grid {
+  display:grid;
+  grid-template-columns:minmax(260px,380px) minmax(0,1fr);
+  gap:24px;
+  align-items:start;
+}
+
+.metadata-value,.original-metadata dd {
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  max-width:420px;
+}
+
+.job-actions {
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+}
+
+.history-table {
+  min-width:540px;
+}
+
+@media (max-width:760px) {
+  .editor-grid { grid-template-columns:minmax(0,1fr); }
+  #jobs-panel .panel-heading { align-items:start; flex-direction:column; }
+}
+
 .form-row {
   display:grid;
   grid-template-columns:1fr 1fr;

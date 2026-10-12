@@ -9,6 +9,10 @@ src/manga_kit/
   komga.py        読み取り専用のKomgaクライアント
   models.py       蔵書・巻・スキャン結果の共通モデル
   library.py      ローカルスキャン、短期メモリキャッシュ
+  state.py        ライブラリ別の編集・ジョブ・操作履歴をSQLiteへ保存
+  jobs.py         スキャン・プレビューの非同期実行、進捗、結果の保存
+  metadata.py     手動編集の検証、差分、同時編集と書庫変更の検出
+  paths.py        Komgaのパスをローカルのライブラリへ対応付け
   japanese.py     カナ正規化・五十音・検索キー
   organizer.py    ファイル変更を伴わない配置計画
   providers.py    メタデータ取得元のインターフェースと読み取り
@@ -80,6 +84,14 @@ v0.2で機能が増えたら、`web.py` の各Blueprintを `features/` 配下へ
 | `GET /api/settings` | キーを含まない設定概要 |
 | `POST /api/komga/test` | 明示的な接続確認 |
 | `GET /api/komga/series?page=0&size=50` | Komgaの作品概要（最大100件/頁） |
+| `POST /api/komga/match` | パス対応付けによる読み取り専用の作品照合 |
+| `GET /api/metadata/<series_id>` | 現在の作品情報、元の情報、編集の版 |
+| `POST /api/metadata/<series_id>/preview` | 手動編集または編集解除の差分 |
+| `POST /api/metadata/<series_id>` | 確認した編集をアプリの実行データへ保存 |
+| `POST /api/jobs` | スキャン/プレビューのジョブ受付（202応答） |
+| `GET /api/jobs` / `GET /api/jobs/<id>` | ジョブ一覧・状態・冊数の進捗 |
+| `GET /api/jobs/<id>/result` | 保存した結果（プレビューは頁ごとに最大200件） |
+| `GET /api/history` | 操作履歴（頁ごとに最大200件） |
 
 整理プレビュー例:
 
@@ -87,4 +99,34 @@ v0.2で機能が増えたら、`web.py` の各Blueprintを `features/` 配下へ
 {"layout": {"completed": "{author}/{series}", "series": "{title}"}}
 ```
 
-現段階は短期メモリキャッシュのみ。永続ジョブ・DB・定期実行は未導入。
+## 編集・ジョブ・操作履歴
+
+スキャン結果は短期メモリキャッシュを使い、編集はそのコピーへ適用する。
+変更した項目だけを保存するため、未編集の項目はComicInfo.xmlやseries.jsonの更新を引き続き反映する。
+編集と操作履歴は同じSQLiteトランザクションで保存する。作品ごとの版で同時編集を検出する。
+保存直前には再スキャンし、差分確認時の書庫情報の指紋と比較する。
+
+ジョブは一つのアプリプロセス内で逐次実行し、処理待ちは最大20件。
+スキャン・整理プレビューのみ実行できる。冊数の進捗、全件の結果、開始・終了・失敗を保存する。
+POSIX環境では再起動時に停止したプロセスのジョブを「中断」にする。Linuxではプロセス開始情報でPIDの再利用も検出する。
+Windowsでのネイティブ実行では中断の自動判定は行わない。Dockerでの実行はLinuxの判定を使う。
+停止したジョブは自動再開しない。利用者が再実行する。多ホストで共有するジョブキュー・定期実行は未導入。
+
+DBは `data.root` に置き、デモ/実ライブラリとライブラリのルートで名前空間を分ける。
+APIやCLIはAPIキー・任意の認証トークンを状態DBへ保存しない。
+既定のGunicornは1ワーカー。複数プロセス・複数ホストを使う分散実行は今後の対象とする。
+
+ジョブ受付例:
+
+```json
+{"kind": "preview", "layout": {"completed": "{author}/{series}"}}
+```
+
+編集の差分確認例:
+
+```json
+{"fields": {"reading": "アメアガリノキッサシツ"}}
+```
+
+保存時は同じ入力に、差分確認の応答の `revision` と `base_fingerprint` を付ける。
+編集解除は `{"reset": true}` の差分確認後、同じ版と指紋を付けて保存する。

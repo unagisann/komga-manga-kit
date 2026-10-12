@@ -1,7 +1,7 @@
 """Validated configuration; media paths never depend on package location."""
 from dataclasses import dataclass, field, replace
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 from string import Formatter
 from urllib.parse import urlsplit
@@ -71,6 +71,12 @@ class Layout:
 
 
 @dataclass(frozen=True)
+class PathMapping:
+    komga: str
+    local: Path
+
+
+@dataclass(frozen=True)
 class Settings:
     name: str = "Komga Manga Kit"
     demo: bool = True
@@ -80,6 +86,17 @@ class Settings:
     komga_url: str = ""
     api_key_env: str = "KOMGA_API_KEY"
     timeout_seconds: int = 10
+    data_root: Path = field(default_factory=lambda: Path.cwd() / "var" / "state")
+    path_mappings: tuple[PathMapping, ...] = ()
+
+    def validate_storage(self):
+        library, data = self.library_root.resolve(), self.data_root.resolve()
+        if library.is_relative_to(data) or data.is_relative_to(library):
+            raise ConfigError("実行データと漫画ライブラリは別の保存先にしてください。")
+        for mapping in self.path_mappings:
+            if not mapping.local.resolve().is_relative_to(library):
+                raise ConfigError("パス対応付けの local は漫画ライブラリ内に指定してください。")
+        return self
 
 
 def load_settings(path: str | Path | None = None) -> Settings:
@@ -96,14 +113,15 @@ def load_settings(path: str | Path | None = None) -> Settings:
             raw = {} if loaded is None else loaded
         except (OSError, yaml.YAMLError) as exc:
             raise ConfigError("設定ファイルを読み込めません。") from exc
-    if not isinstance(raw, dict) or set(raw) - {"app", "library", "layout", "komga"}:
-        raise ConfigError("設定は app / library / layout / komga のマッピングで指定してください。")
-    sections = {name: raw.get(name, {}) for name in ("app", "library", "layout", "komga")}
+    if not isinstance(raw, dict) or set(raw) - {"app", "library", "layout", "komga", "data"}:
+        raise ConfigError("設定は app / library / layout / komga / data のマッピングで指定してください。")
+    sections = {name: raw.get(name, {}) for name in ("app", "library", "layout", "komga", "data")}
     if any(not isinstance(value, dict) for value in sections.values()):
         raise ConfigError("設定の各セクションはマッピングで指定してください。")
     valid_keys = {"app": {"name", "demo"}, "library": {"root", "max_files"},
                   "layout": {"status_folders", "series", "book", "ongoing", "completed", "unknown"},
-                  "komga": {"base_url", "api_key_env", "timeout_seconds"}}
+                  "komga": {"base_url", "api_key_env", "timeout_seconds", "path_mappings"},
+                  "data": {"root"}}
     for section, value in sections.items():
         if set(value) - valid_keys[section]:
             raise ConfigError(f"{section} に未知の設定項目があります。")
@@ -118,6 +136,12 @@ def load_settings(path: str | Path | None = None) -> Settings:
     root = Path(root_value).expanduser()
     if not root.is_absolute():
         root = source.parent / root
+    data_value = os.getenv("MANGA_KIT_DATA_ROOT") or sections["data"].get("root", "./var/state")
+    if not isinstance(data_value, str) or not data_value.strip():
+        raise ConfigError("実行データの保存先は空でないパスで指定してください。")
+    data_root = Path(data_value).expanduser()
+    if not data_root.is_absolute():
+        data_root = source.parent / data_root
     demo = app.get("demo", True)
     if "MANGA_KIT_DEMO" in os.environ:
         value = os.environ["MANGA_KIT_DEMO"].lower()
@@ -144,4 +168,24 @@ def load_settings(path: str | Path | None = None) -> Settings:
     key_env = komga.get("api_key_env", "KOMGA_API_KEY")
     if not isinstance(key_env, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]*", key_env):
         raise ConfigError("APIキーの環境変数名が不正です。")
-    return Settings(name, demo, root.resolve(), limit, Layout(**layout).validate(), url.rstrip("/"), key_env, timeout)
+    from .paths import remote_path
+    values = komga.get("path_mappings", [])
+    if not isinstance(values, list) or len(values) > 100:
+        raise ConfigError("path_mappings は100件以内のリストで指定してください。")
+    mappings, seen = [], set()
+    for value in values:
+        if not isinstance(value, dict) or set(value) != {"komga", "local"}:
+            raise ConfigError("パス対応付けには komga と local を指定してください。")
+        parsed_path = remote_path(value["komga"])
+        key = str(parsed_path).casefold() if isinstance(parsed_path, PureWindowsPath) else str(parsed_path)
+        if key in seen:
+            raise ConfigError("Komgaの対応元パスが重複しています。")
+        seen.add(key)
+        if not isinstance(value["local"], str) or not value["local"].strip():
+            raise ConfigError("パス対応付けの local は空でないパスで指定してください。")
+        local = Path(value["local"]).expanduser()
+        if not local.is_absolute():
+            local = source.parent / local
+        mappings.append(PathMapping(str(parsed_path), local.resolve()))
+    return Settings(name, demo, root.resolve(), limit, Layout(**layout).validate(), url.rstrip("/"), key_env,
+                    timeout, data_root.resolve(), tuple(mappings)).validate_storage()

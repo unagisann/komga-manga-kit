@@ -5,8 +5,10 @@ import sys
 
 from .config import ConfigError, load_settings
 from .library import LibraryService
+from .jobs import JobService
 from .organizer import plan_organization
 from .sample import create_sample_library
+from .state import StateStore
 
 
 def main():
@@ -16,8 +18,14 @@ def main():
     serve = commands.add_parser("serve", help="ローカルUIを起動")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=5080)
-    commands.add_parser("scan", help="蔵書とメタデータを読み取り、JSONで表示")
-    commands.add_parser("plan", help="整理プレビューをJSONで表示（変更なし）")
+    for name, help_text in [("scan", "蔵書とメタデータを読み取り、JSONで表示"),
+                            ("plan", "整理プレビューをJSONで表示（変更なし）")]:
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("--record", action="store_true", help="処理履歴と結果を保存")
+    jobs = commands.add_parser("jobs", help="保存した処理履歴をJSONで表示")
+    jobs.add_argument("--limit", type=int, default=50)
+    job = commands.add_parser("job", help="保存した処理の結果を全件表示")
+    job.add_argument("id")
     sample = commands.add_parser("sample", help="架空のサンプルCBZを空のフォルダに生成")
     sample.add_argument("--output", type=Path, default=Path("var/sample-library"))
     args = parser.parse_args()
@@ -30,11 +38,32 @@ def main():
             count = create_sample_library(args.output, config.layout)
             print(f"{args.output.resolve()} に {count} 冊のサンプルを作成しました。")
         else:
-            result = LibraryService(config).scan()
-            output = ({"series": [s.to_dict() for s in result.series], "stats": result.stats(),
-                       "warnings": result.warnings, "truncated": result.truncated, "demo": config.demo}
-                      if args.command == "scan" else plan_organization(result.series, config.layout,
-                                                                      None if config.demo else config.library_root))
+            store = StateStore(config)
+            store.recover()
+            library = LibraryService(config, store=store)
+            if args.command == "jobs":
+                if not 1 <= args.limit <= 200:
+                    raise ConfigError("limit は1〜200で指定してください。")
+                output = {"jobs": store.jobs(args.limit)}
+            elif args.command == "job":
+                output = store.job(args.id, include_result=True)
+                if output is None:
+                    raise ConfigError("処理が見つかりません。")
+            elif args.record:
+                service = JobService(library, store)
+                try:
+                    job_id = service.submit("scan" if args.command == "scan" else "preview")
+                finally:
+                    service.shutdown()
+                output = store.job(job_id, include_result=True)
+                if output["status"] != "succeeded":
+                    raise ConfigError(output["error"])
+            else:
+                result = library.scan()
+                output = ({"series": [s.to_dict() for s in result.series], "stats": result.stats(),
+                           "warnings": result.warnings, "truncated": result.truncated, "demo": config.demo}
+                          if args.command == "scan" else plan_organization(result.series, config.layout,
+                                                                          None if config.demo else config.library_root))
             print(json.dumps(output, ensure_ascii=False, indent=2))
     except (ConfigError, ValueError, OSError) as exc:
         print(str(exc), file=sys.stderr)

@@ -33,7 +33,7 @@ def filename_volume(name: str) -> str | None:
     return volume_number(next((g for g in match.groups() if g is not None), None)) if match else None
 
 
-def scan_library(settings: Settings, providers=None) -> ScanResult:
+def scan_library(settings: Settings, providers=None, progress=None) -> ScanResult:
     root = settings.library_root
     result = ScanResult([])
     if not root.is_dir():
@@ -88,6 +88,8 @@ def scan_library(settings: Settings, providers=None) -> ScanResult:
                 # One corrupt archive or provider must not hide the rest of the library.
                 series.warnings.append(f"{filename}: メタデータを読み取れません（{type(exc).__name__}）。")
             series.books.append(book)
+            if progress is not None:
+                progress(count)
         if sidecar:
             for key, value in sidecar.fields.items():
                 setattr(series, key, value)
@@ -101,17 +103,22 @@ def scan_library(settings: Settings, providers=None) -> ScanResult:
 
 
 class LibraryService:
-    def __init__(self, settings: Settings, providers=None):
-        self.settings, self.providers = settings, providers
+    def __init__(self, settings: Settings, providers=None, store=None):
+        self.settings, self.providers, self.store = settings, providers, store
         self._lock, self._updated, self._cache = Lock(), 0.0, None
 
-    def scan(self, refresh=False) -> ScanResult:
+    def scan(self, refresh=False, *, edited=True, progress=None) -> ScanResult:
         with self._lock:
             if refresh or self._cache is None or time.monotonic() - self._updated > 30:
                 if self.settings.demo:
                     from .sample import demo_library
                     self._cache = demo_library(self.settings.layout)
                 else:
-                    self._cache = scan_library(self.settings, self.providers)
+                    self._cache = scan_library(self.settings, self.providers, progress)
                 self._updated = time.monotonic()
+            if edited and self.store is not None:
+                from .metadata import apply_edits
+                result = apply_edits(self._cache, self.store.edits())
+                result.series.sort(key=lambda s: (search_key(s.reading or s.title), s.path))
+                return result
             return self._cache

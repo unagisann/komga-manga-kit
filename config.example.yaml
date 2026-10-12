@@ -5,6 +5,8 @@ app:
 library:
   root: ./var/sample-library
   max_files: 20000
+data:
+  root: ./var/state
 layout:
   status_folders:
     ongoing: 連載中
@@ -19,3 +21,5 @@ komga:
   base_url: ""
   api_key_env: KOMGA_API_KEY
   timeout_seconds: 10
+  path_mappings: []
+  # Example: [{komga: /data/manga, local: /library}]

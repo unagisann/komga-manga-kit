@@ -1,6 +1,7 @@
 """Flask app factory; separate app instances own their services and settings."""
 import hmac
 import os
+import sqlite3
 from urllib.parse import urlsplit
 
 from flask import Flask, jsonify, request
@@ -11,7 +12,10 @@ from .config import ConfigError, load_settings
 from .features import built_in_features
 from .komga import KomgaClient, KomgaError
 from .library import LibraryService
+from .jobs import JobService
+from .metadata import MetadataService
 from .providers import ComicInfoProvider
+from .state import StateConflict, StateStore
 
 
 def create_app(config_path=None, *, settings=None, features=None):
@@ -20,7 +24,11 @@ def create_app(config_path=None, *, settings=None, features=None):
     app = Flask(__name__)
     app.config.update(MAX_CONTENT_LENGTH=16 * 1024, MANGA_KIT=settings)
     providers = [ComicInfoProvider()]
-    app.extensions.update(library=LibraryService(settings, providers), komga=KomgaClient(settings), providers=providers)
+    store = StateStore(settings)
+    store.recover()
+    library = LibraryService(settings, providers, store)
+    app.extensions.update(library=library, komga=KomgaClient(settings), providers=providers, state=store,
+                          jobs=JobService(library, store), metadata=MetadataService(library, store))
     registry = list(built_in_features() if features is None else features)
     if len({feature.id for feature in registry}) != len(registry):
         raise ConfigError("機能IDが重複しています。")
@@ -48,6 +56,10 @@ def create_app(config_path=None, *, settings=None, features=None):
     def context():
         return {"settings": settings, "features": registry, "version": __version__,
                 "status_labels": {"ongoing": "連載中", "completed": "完結", "unknown": "未分類"},
+                "job_labels": {"scan": "蔵書スキャン", "preview": "整理プレビュー"},
+                "job_status_labels": {"queued": "待機中", "running": "処理中", "succeeded": "完了",
+                                      "failed": "失敗", "interrupted": "中断"},
+                "event_labels": {"metadata_edit": "作品情報の編集", "job_created": "処理の受付", "job_finished": "処理の終了"},
                 "active_feature": (request.endpoint or "").split(".")[0]}
 
     @app.get("/healthz")
@@ -61,6 +73,15 @@ def create_app(config_path=None, *, settings=None, features=None):
     @app.errorhandler(KomgaError)
     def komga_error(error):
         return jsonify(error=str(error), connected=False), 502
+
+    @app.errorhandler(StateConflict)
+    def state_conflict(error):
+        return jsonify(error=str(error)), 409
+
+    @app.errorhandler(OSError)
+    @app.errorhandler(sqlite3.Error)
+    def storage_error(error):
+        return jsonify(error="保存先を利用できません。実行データの場所・空き容量・アクセス権を確認してください。"), 503
 
     @app.errorhandler(HTTPException)
     def http_error(error):

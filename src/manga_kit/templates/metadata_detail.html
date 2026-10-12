@@ -1,0 +1,26 @@
+{% extends 'base.html' %}{% import 'components.html' as ui %}
+{% block title %}{{ series.title }}の情報{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">METADATA</p><h1>{{ series.title }}</h1><p>読みと作品情報を確認し、本棚の表示と整理プレビューに反映します。</p></div><a class="button" href="{{ url_for('metadata.index') }}">作品一覧へ</a></div>
+<div class="notice">保存した情報は再起動後も使えます。書庫・series.json・Komgaへの反映は今後追加します。</div>
+<div class="editor-grid">
+  <section class="panel rule-panel"><div class="panel-heading"><h2>作品情報を編集</h2><span class="chip">{{ series.kana_row }}行</span></div>
+    <form id="metadata-form" data-series-id="{{ series.id }}">
+      {% for key, label in [('title', '作品名'), ('author', '著者'), ('reading', '読み'), ('publisher', '出版社')] %}
+      <label>{{ label }}<input name="{{ key }}" value="{{ series[key] }}" maxlength="300" {% if key == 'title' %}required{% endif %}></label>{% endfor %}
+      <label>状態<select name="status">{% for key, label in status_labels.items() %}<option value="{{ key }}" {% if key == series.status %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label>あらすじ<textarea name="summary" rows="6" maxlength="8000">{{ series.summary }}</textarea></label>
+      <p class="form-hint">半角・全角カナは保存時にひらがなへ揃えます。読みは五十音分類と整理先に使います。</p>
+      <button class="button primary" type="submit">変更内容を確認</button>
+      <button class="button" type="button" id="metadata-reset" {% if not overrides %}disabled{% endif %}>読み取った情報に戻す</button>
+    </form>
+  </section>
+  <section class="panel"><div class="panel-heading"><h2>変更内容</h2></div>
+    <p id="metadata-message" role="status">編集後に「変更内容を確認」を押してください。</p>
+    <div id="metadata-error" class="notice warning" role="alert" hidden></div>
+    <div class="table-scroll"><table><thead><tr><th>項目</th><th>変更前</th><th>変更後</th></tr></thead><tbody id="metadata-diff"></tbody></table></div>
+    <button class="button primary section" type="button" id="metadata-save" disabled>この内容で保存</button>
+    <details class="section"><summary>書庫から読み取った情報</summary><dl class="settings-list original-metadata">{% for key, label in [('title', '作品名'), ('author', '著者'), ('reading', '読み'), ('status', '状態'), ('publisher', '出版社'), ('summary', 'あらすじ')] %}<dt>{{ label }}</dt><dd>{{ status_labels.get(original[key], original[key]) if key == 'status' else original[key] or '未設定' }}</dd>{% endfor %}</dl></details>
+  </section>
+</div>
+{% endblock %}
