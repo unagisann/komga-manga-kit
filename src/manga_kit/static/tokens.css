@@ -1,0 +1,19 @@
+/* Shared tokens: change branding here; feature styles use these variables. */
+:root {
+  color-scheme: light;
+  --bg: #f0eee6; --surface: #faf9f5; --surface-raised: #fff;
+  --text: #242420; --muted: #73736a; --border: #e0ded5;
+  --accent: #b95638; --accent-hover: #9f452c; --accent-soft: #f3e4dc;
+  --success: #526c52; --success-soft: #e8eee4; --warning: #946a29; --warning-soft: #f4ebd8;
+  --radius: 14px; --radius-sm: 9px; --max-width: 1180px;
+  --font: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Meiryo", sans-serif;
+  --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 64px;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark; --bg: #1f1e1d; --surface: #282725; --surface-raised: #30302c;
+  --text: #f5f4ee; --muted: #aaa89e; --border: #403e38;
+  --accent: #e79a7d; --accent-hover: #f2b296; --accent-soft: #3a302b;
+  --success: #b0c4a6; --success-soft: #2c352b; --warning: #d8b572; --warning-soft: #382f23;
+}

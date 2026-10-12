@@ -1,0 +1,15 @@
+{% extends 'base.html' %}{% import 'components.html' as ui %}
+{% block title %}蔵書整理{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">ORGANIZE</p><h1>本棚のルールをつくる</h1><p>フォルダ名と階層を変えて、整理後の配置を確認できます。</p></div><span class="badge">{{ ui.icon('info', 16) }}プレビュー</span></div>
+<div class="notice">現在は整理結果の確認まで利用できます。実際のファイル移動・書庫変換は今後のv0.1で追加します。</div>
+{{ ui.scan_notice(scan) }}
+<div class="workspace"><section class="panel rule-panel"><div class="panel-heading"><h2>整理ルール</h2><span class="muted">01</span></div><form id="layout-form">
+  <label>階層のプリセット<select id="layout-preset"><option value="custom">現在の設定</option><option value="kana">状態 → 五十音 → 作品</option><option value="status">状態 → 作品</option><option value="author">著者 → 作品</option><option value="flat">作品のみ</option></select></label>
+  <div class="form-row">{% for key, label in [('ongoing_folder', '連載中フォルダ'), ('completed_folder', '完結フォルダ')] %}<label>{{ label }}<input name="{{ key }}" value="{{ layout[key] }}" required></label>{% endfor %}</div>
+  <label>未分類フォルダ<input name="unknown_folder" value="{{ layout.unknown_folder }}" required></label>
+  {% for key, label in [('series', '作品フォルダ名'), ('book', '巻ファイル名'), ('ongoing', '連載中の階層'), ('completed', '完結の階層'), ('unknown', '未分類の階層')] %}<label>{{ label }}<input class="mono" name="{{ key }}" value="{{ layout[key] }}" required></label>{% endfor %}
+  <p class="form-hint">作品: <code>{title}</code> <code>{author}</code><br>階層: <code>{status}</code> <code>{kana_row}</code> <code>{series}</code><br>巻名: <code>{title}</code> <code>{volume:02}</code> <code>{extension}</code></p>
+  <button class="button primary full" type="submit">{{ ui.icon('refresh', 17) }}プレビューを更新</button><p class="form-hint">設定を保存するには <code>config.yaml</code> を編集してください。</p>
+</form></section><section class="panel plan-panel"><div class="panel-heading"><h2>整理後の配置</h2><span class="muted">02</span></div><div class="plan-counts" id="plan-counts"><span><strong>{{ plan.counts.ready }}</strong> 変更予定</span><span><strong>{{ plan.counts.unchanged }}</strong> 変更なし</span><span><strong>{{ plan.counts.blocked }}</strong> 要確認</span></div><div id="plan-error" class="notice warning" role="alert" hidden></div><div class="plan-list" id="plan-list">{% for item in plan['items'][:200] %}<article class="plan-item {{ item.state }}"><div class="plan-item-heading"><strong>{{ item.title }}</strong><span class="chip">{{ {'ready': '変更予定', 'unchanged': '変更なし', 'blocked': '要確認'}[item.state] }}</span></div><code class="source-path">{{ item.source }}</code><span class="path-arrow">↓</span><code class="target-path">{{ item.target or '巻数の確認が必要です' }}</code>{% for issue in item.issues %}<p class="warning-text">{{ issue }}</p>{% endfor %}</article>{% else %}<div class="empty-state">整理対象の蔵書がありません。</div>{% endfor %}{% if plan['items']|length > 200 %}<p class="form-hint">先頭200件を表示しています。全件はCLIの plan で確認できます。</p>{% endif %}</div></section></div>
+{% endblock %}

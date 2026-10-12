@@ -1,0 +1,21 @@
+# Relative paths are resolved against this file, not the source directory.
+app:
+  name: Komga Manga Kit
+  demo: true
+library:
+  root: ./var/sample-library
+  max_files: 20000
+layout:
+  status_folders:
+    ongoing: 連載中
+    completed: 完結
+    unknown: 未分類
+  series: "[{author}] {title}"
+  book: "{title} 第{volume:02}巻{extension}"
+  ongoing: "{status}/{series}"
+  completed: "{status}/{kana_row}/{series}"
+  unknown: "{status}/{series}"
+komga:
+  base_url: ""
+  api_key_env: KOMGA_API_KEY
+  timeout_seconds: 10

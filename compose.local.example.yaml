@@ -1,0 +1,8 @@
+# Copy to compose.local.yaml and adjust the host library path.
+services:
+  manga-kit:
+    environment:
+      MANGA_KIT_CONFIG: /app/config.yaml
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - /path/to/your/manga:/library:ro

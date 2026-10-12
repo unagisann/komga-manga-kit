@@ -1,0 +1,17 @@
+.git
+.venv
+__pycache__
+**/__pycache__
+*.egg-info
+**/*.egg-info
+.env
+config.yaml
+compose.local.yaml
+var
+tests
+*.cbz
+*.cbr
+*.rar
+*.7z
+*.zip
+*.epub
