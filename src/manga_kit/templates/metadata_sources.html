@@ -1,0 +1,36 @@
+{% extends 'base.html' %}{% import 'components.html' as ui %}
+{% block title %}{{ series.title }}の補完候補{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='enrichment.js') }}" defer></script>{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">METADATA SOURCES</p><h1>作品情報を補完</h1><p>{{ series.title }} · {{ series.author or '著者未設定' }}</p></div><a class="button" href="{{ url_for('metadata.metadata_detail', series_id=series.id) }}">作品情報へ戻る</a></div>
+<div id="enrichment" data-series-id="{{ series.id }}" data-current="{{ series|tojson|forceescape }}">
+  <div class="notice">{{ '架空の書誌データで検索・差分確認・保存を試せます。外部サービスへは通信しません。' if catalog.provider == 'demo' else '入力した作品名・著者・ISBNを楽天Booksへ送信します。代表巻の書誌情報を確認して、この本棚の作品情報へ反映します。' }}</div>
+  {% if not catalog.configured %}<div class="notice warning">楽天Booksの認証情報が未設定です。<a href="/settings">設定画面</a>の案内を確認してください。</div>{% endif %}
+  {% if provenance %}<section class="panel section"><div class="panel-heading"><h2>現在の対応付け</h2><button class="button" id="source-unlink" type="button">対応付けを解除</button></div><p>{{ '楽天Books' if provenance.provider == 'rakuten_books' else '架空の書誌データ' }} · {{ provenance.item_id }}{% if provenance.url %} · <a href="{{ provenance.url }}" target="_blank" rel="noopener noreferrer">情報源を見る</a>{% endif %}</p><p class="form-hint">取得 <time class="local-time" datetime="{{ provenance.retrieved_at }}">{{ provenance.retrieved_at }}</time></p><p class="form-hint">解除しても保存した作品情報は残ります。別の候補を選んで対応を修正することもできます。</p></section>{% endif %}
+  <section class="panel rule-panel section"><div class="panel-heading"><h2>{{ catalog.label }}で探す</h2><span class="chip">書誌情報</span></div>
+    <form id="source-search" class="source-search">
+      <label>作品名<input name="title" value="{{ series.title }}" maxlength="200"></label>
+      <label>著者<input name="author" value="{{ series.author }}" maxlength="200"></label>
+      <label>ISBN（13桁・任意）<input name="isbn" maxlength="30" inputmode="numeric" placeholder="入力した場合はISBNで検索"></label>
+      <button class="button primary" type="submit" {% if not catalog.configured %}disabled{% endif %}>{{ ui.icon('search', 17) }}候補を検索</button>
+    </form>
+    <p class="form-hint">巻数・新装版・著者を確認して代表巻を選んでください。結果は1時間再利用し、取得日時を表示します。</p>
+    <p id="source-search-message" role="status">検索すると候補が表示されます。</p>
+    <div id="source-results" class="source-results"></div>
+    <div id="source-pages" class="source-pages" hidden><button class="button" id="source-prev" type="button">前へ</button><span id="source-page-label"></span><button class="button" id="source-next" type="button">次へ</button></div>
+  </section>
+  <div id="source-error" class="notice warning" role="alert" hidden></div>
+  <section id="source-selection" class="panel section" hidden>
+    <div class="panel-heading"><h2 id="source-selected-title">採用する項目</h2><span class="chip" id="source-selected-provider"></span></div>
+    <p id="source-reference"></p>
+    <p class="form-hint">必要な項目にチェックを入れ、作品単位の情報へ修正できます。巻数付きの作品名・読みにはご注意ください。</p>
+    <form id="source-fields"><div id="source-field-list" class="source-field-list"></div><button class="button primary" type="submit">採用内容を確認</button></form>
+  </section>
+  <section id="source-review" class="panel section" hidden>
+    <div class="panel-heading"><h2>保存する内容</h2></div><p id="source-review-message" role="status"></p>
+    <div class="table-scroll"><table><thead><tr><th>項目</th><th>変更前</th><th>変更後</th></tr></thead><tbody id="source-diff"></tbody></table></div>
+    <p class="form-hint">保存先はこのツールの作品情報です。書庫・Komgaへの反映は今後追加します。</p>
+    <button class="button primary" id="source-save" type="button" disabled>対応付けと選んだ情報を保存</button>
+  </section>
+</div>
+{% endblock %}

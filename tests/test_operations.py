@@ -303,7 +303,7 @@ class OperationTests(unittest.TestCase):
         self.assertEqual(upgraded.edits()['existing']['fields'], {'reading': 'さくら'})
         self.assertEqual(upgraded.job(job_id)['kind'], 'scan')
         with upgraded.connection() as conn:
-            self.assertEqual(conn.execute('PRAGMA user_version').fetchone()[0], 2)
+            self.assertEqual(conn.execute('PRAGMA user_version').fetchone()[0], 3)
         self.assertIsNone(upgraded.operation_edits('unknown'))
 
 

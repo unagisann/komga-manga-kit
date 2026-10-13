@@ -22,6 +22,8 @@ src/manga_kit/
   archives.py     書庫の内容検証、自然順の計画、バイト列を保持したCBZ生成
   conversion.py   別保存先への確認済みCBZ生成・バックアップ・取り消し
   providers.py    メタデータ取得元のインターフェースと読み取り
+  catalogs.py     楽天Booksと架空データの書誌検索、応答検証、通信制限
+  enrichment.py   作品別の検索キャッシュ、候補の照合・差分確認・補完元の保存
   sample.py       架空のデータ・検証用CBZの生成
   cli.py          UI・スキャン・計画・実行・復元・サンプル生成の入口
   templates/     共通シェル、部品、各画面
@@ -61,7 +63,9 @@ v0.2で機能が増えたら、`web.py` の各Blueprintを `features/` 配下へ
 `MetadataProvider` の `id`・`label`・`inspect(path)` を実装する。
 戻り値は `MetadataProposal(source, fields)`。取得元はファイルやKomgaへ書き込まない。
 `create_app()` の取得元一覧へ登録すると、スキャン時に呼ばれる。
-外部API向けの検索/作品ID対応付けは別インターフェースとしてv0.1で追加する。
+外部検索は `catalogs.py` の `id`・`label`・`configured()`・`search(query)` を持つ取得元で扱う。
+`EnrichmentService` がデモまたは楽天Booksを選び、検索結果を作品ごとに保持する。
+別の取得元を追加する場合は、固有の候補IDと安全な情報源URL、検証した作品項目を返す。
 スキャン中に蔵書全件について外部APIを呼ぶ設計にはしない。
 
 優先順位: 作品フォルダの `series.json` → 書庫のComicInfo.xml → フォルダ/ファイル名。
@@ -94,7 +98,7 @@ ZIPは標準ライブラリ、RAR/7zはlibarchiveでブロック読み取りし�
 全CBZを生成・CRC/SHA-256検証してから出力し、生成ファイルのinodeを公開前に記録する。停止後も自分の生成物だけを取り消せる。
 復元・生成のコピー用一時ファイルは書き込み前にパス・デバイス・inodeを記録する。
 再試行時は操作ID付きの名前・計画の親フォルダ・inodeを照合し、差し替えを拒否して一致する一時ファイルだけを削除する。
-変換はKomga APIを使用しない。元書庫の置き換え、変換先への既読移行、外部補完情報の書き込みは未実装。
+変換はKomga APIを使用しない。元書庫の置き換え、変換先への既読移行、Komgaへの外部補完情報の書き込みは未実装。
 [整理実行ガイド](ORGANIZATION.md) と [CBZ生成ガイド](CONVERSION.md) に制約を記載する。
 
 ## API（現段階）
@@ -112,6 +116,9 @@ ZIPは標準ライブラリ、RAR/7zはlibarchiveでブロック読み取りし�
 | `GET /api/metadata/<series_id>` | 現在の作品情報、元の情報、編集の版 |
 | `POST /api/metadata/<series_id>/preview` | 手動編集または編集解除の差分 |
 | `POST /api/metadata/<series_id>` | 確認した編集をアプリの実行データへ保存 |
+| `POST /api/metadata/<series_id>/search` | 明示的な書誌検索。作品名・著者・ISBN・ページ |
+| `POST /api/metadata/<series_id>/source/preview` | 選んだ候補の項目別補完、または対応解除の差分 |
+| `POST /api/metadata/<series_id>/source` | 確認した項目と対応付けを同時に保存 |
 | `POST /api/jobs` | スキャン/プレビューのジョブ受付（202応答） |
 | `GET /api/jobs` / `GET /api/jobs/<id>` | ジョブ一覧・状態・冊数の進捗 |
 | `GET /api/jobs/<id>/result` | 保存した結果（プレビューは頁ごとに最大200件） |
@@ -143,6 +150,13 @@ JSON記録更新の前に停止しても、DBの結果から復元できる。�
 各SQLite接続で `synchronous=FULL` を指定し、WALのコミットを同期する。
 同期エラーは処理を中止する。[保存と中断からの復元](DURABILITY.md) に保存順序と検証の限界を記載する。
 APIやCLIはAPIキー・任意の認証トークンを状態DBへ保存しない。
+スキーマ3は編集行に補完元の `provenance` を追加する。情報源・候補ID・URL・取得日時・採用/調整項目を保持する。
+補完元の変更は編集の版も進めるため、作成済みの整理計画と同時編集の確認に含まれる。
+整理・復元では補完元も同じトランザクションで移設し、手動編集で値が変わった項目は補完元の採用一覧から外す。
+対応付けの解除は保存済みの作品項目を保持し、編集の全解除は補完元も解除する。
+検索キャッシュは別テーブルで1時間・ライブラリごと100件まで保持し、期限切れは起動・検索時に削除する。
+候補の採用時もライブラリ・作品・取得元・期限を再検証し、ブラウザが指定した情報源URLは受け付けない。
+1.1秒の検索間隔と429の待機期限はDBでプロセス間共有する。自動再試行は行わない。
 既定のGunicornは1ワーカー。複数プロセス・複数ホストを使う分散実行は今後の対象とする。
 
 ジョブ受付例:

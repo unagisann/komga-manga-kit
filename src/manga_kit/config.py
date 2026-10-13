@@ -77,6 +77,36 @@ class PathMapping:
 
 
 @dataclass(frozen=True)
+class RakutenSettings:
+    enabled: bool = False
+    application_id_env: str = "RAKUTEN_APPLICATION_ID"
+    access_key_env: str = "RAKUTEN_ACCESS_KEY"
+    origin: str = ""
+    timeout_seconds: int = 10
+
+    def validate(self):
+        if type(self.enabled) is not bool:
+            raise ConfigError("rakuten.enabled は true / false で指定してください。")
+        for name in (self.application_id_env, self.access_key_env):
+            if not isinstance(name, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]*", name):
+                raise ConfigError("楽天の認証情報は環境変数名で指定してください。")
+        if type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 30:
+            raise ConfigError("楽天のタイムアウトは1〜30秒で指定してください。")
+        if not isinstance(self.origin, str) or len(self.origin) > 2048 or any(ord(c) < 33 or ord(c) > 126 for c in self.origin):
+            raise ConfigError("rakuten.origin は登録したHTTP(S)のオリジンで指定してください。")
+        try:
+            parsed = urlsplit(self.origin)
+            parsed.port
+        except ValueError as exc:
+            raise ConfigError("rakuten.origin が不正です。") from exc
+        if self.origin and (parsed.scheme not in {"https", "http"} or not parsed.hostname
+                            or parsed.username or parsed.password or parsed.path not in {"", "/"}
+                            or parsed.query or parsed.fragment):
+            raise ConfigError("rakuten.origin に認証情報・パス・クエリは指定できません。")
+        return self
+
+
+@dataclass(frozen=True)
 class Settings:
     name: str = "Komga Manga Kit"
     demo: bool = True
@@ -89,8 +119,10 @@ class Settings:
     data_root: Path = field(default_factory=lambda: Path.cwd() / "var" / "state")
     path_mappings: tuple[PathMapping, ...] = ()
     execution_enabled: bool = False
+    rakuten: RakutenSettings = field(default_factory=RakutenSettings)
 
     def validate_storage(self):
+        self.rakuten.validate()
         library, data = self.library_root.resolve(), self.data_root.resolve()
         if library.is_relative_to(data) or data.is_relative_to(library):
             raise ConfigError("実行データと漫画ライブラリは別の保存先にしてください。")
@@ -114,15 +146,16 @@ def load_settings(path: str | Path | None = None) -> Settings:
             raw = {} if loaded is None else loaded
         except (OSError, yaml.YAMLError) as exc:
             raise ConfigError("設定ファイルを読み込めません。") from exc
-    if not isinstance(raw, dict) or set(raw) - {"app", "library", "layout", "komga", "data", "execution"}:
-        raise ConfigError("設定は app / library / layout / komga / data / execution のマッピングで指定してください。")
-    sections = {name: raw.get(name, {}) for name in ("app", "library", "layout", "komga", "data", "execution")}
+    if not isinstance(raw, dict) or set(raw) - {"app", "library", "layout", "komga", "data", "execution", "rakuten"}:
+        raise ConfigError("設定は app / library / layout / komga / data / execution / rakuten のマッピングで指定してください。")
+    sections = {name: raw.get(name, {}) for name in ("app", "library", "layout", "komga", "data", "execution", "rakuten")}
     if any(not isinstance(value, dict) for value in sections.values()):
         raise ConfigError("設定の各セクションはマッピングで指定してください。")
     valid_keys = {"app": {"name", "demo"}, "library": {"root", "max_files"},
                   "layout": {"status_folders", "series", "book", "ongoing", "completed", "unknown"},
                   "komga": {"base_url", "api_key_env", "timeout_seconds", "path_mappings"},
-                  "data": {"root"}, "execution": {"enabled"}}
+                  "data": {"root"}, "execution": {"enabled"},
+                  "rakuten": {"enabled", "application_id_env", "access_key_env", "origin", "timeout_seconds"}}
     for section, value in sections.items():
         if set(value) - valid_keys[section]:
             raise ConfigError(f"{section} に未知の設定項目があります。")
@@ -192,4 +225,5 @@ def load_settings(path: str | Path | None = None) -> Settings:
     if type(enabled) is not bool:
         raise ConfigError("execution.enabled は true / false で指定してください。")
     return Settings(name, demo, root.resolve(), limit, Layout(**layout).validate(), url.rstrip("/"), key_env,
-                    timeout, data_root.resolve(), tuple(mappings), enabled).validate_storage()
+                    timeout, data_root.resolve(), tuple(mappings), enabled,
+                    RakutenSettings(**sections["rakuten"]).validate()).validate_storage()

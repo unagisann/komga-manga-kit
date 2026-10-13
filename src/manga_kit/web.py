@@ -63,6 +63,12 @@ def metadata_detail(series_id):
     return render_template("metadata_detail.html", **data)
 
 
+@metadata.get("/metadata/<series_id>/sources")
+def metadata_sources(series_id):
+    data = metadata_service().inspect(series_id)
+    return render_template("metadata_sources.html", **data, catalog=current_app.extensions["enrichment"].status())
+
+
 @jobs.get("/jobs", endpoint="index")
 def jobs_index():
     return render_template("jobs.html", jobs=current_app.extensions["state"].jobs(),
@@ -84,7 +90,8 @@ def job_detail(job_id):
 @settings.get("/settings", endpoint="index")
 def settings_index():
     config = configuration()
-    return render_template("settings.html", key_configured=bool(os.getenv(config.api_key_env)), layout=asdict(config.layout))
+    return render_template("settings.html", key_configured=bool(os.getenv(config.api_key_env)), layout=asdict(config.layout),
+                           catalog=current_app.extensions["enrichment"].status())
 
 
 @roadmap.get("/roadmap", endpoint="index")
@@ -124,6 +131,7 @@ def api_settings():
                    max_files=config.max_files, layout=asdict(config.layout), komga_url=config.komga_url,
                    api_key_configured=bool(os.getenv(config.api_key_env)), preview_only=True,
                    execution_enabled=config.execution_enabled, execution_interface="cli",
+                   metadata_catalog=current_app.extensions["enrichment"].status(),
                    data_root=str(config.data_root), path_mappings=[{"komga": m.komga, "local": str(m.local)}
                                                                   for m in config.path_mappings])
 
@@ -185,6 +193,25 @@ def metadata_save(series_id):
         raise ConfigError("reset は true / false で指定してください。")
     return jsonify(metadata_service().save(series_id, body.get("fields"), body["revision"], body["base_fingerprint"],
                                           reset=body.get("reset", False)))
+
+
+@api.post("/metadata/<series_id>/search")
+def metadata_search(series_id):
+    body = body_with_keys({"title", "author", "isbn", "page"})
+    return jsonify(current_app.extensions["enrichment"].search(series_id, **body))
+
+
+@api.post("/metadata/<series_id>/source/preview")
+def source_preview(series_id):
+    body = body_with_keys({"search_id", "candidate_id", "fields", "unlink"})
+    return jsonify(current_app.extensions["enrichment"].preview(series_id, **body))
+
+
+@api.post("/metadata/<series_id>/source")
+def source_save(series_id):
+    body = body_with_keys({"search_id", "candidate_id", "fields", "unlink", "revision", "base_fingerprint"},
+                          {"revision", "base_fingerprint"})
+    return jsonify(current_app.extensions["enrichment"].save(series_id, **body))
 
 
 def pagination():

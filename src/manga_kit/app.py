@@ -10,6 +10,8 @@ from werkzeug.exceptions import HTTPException
 from . import __version__
 from .config import ConfigError, load_settings
 from .features import built_in_features
+from .catalogs import CatalogError
+from .enrichment import EnrichmentService
 from .komga import KomgaClient, KomgaError
 from .library import LibraryService
 from .jobs import JobService
@@ -29,6 +31,7 @@ def create_app(config_path=None, *, settings=None, features=None):
     library = LibraryService(settings, providers, store)
     app.extensions.update(library=library, komga=KomgaClient(settings), providers=providers, state=store,
                           jobs=JobService(library, store), metadata=MetadataService(library, store))
+    app.extensions["enrichment"] = EnrichmentService(settings, app.extensions["metadata"], store)
     registry = list(built_in_features() if features is None else features)
     if len({feature.id for feature in registry}) != len(registry):
         raise ConfigError("機能IDが重複しています。")
@@ -55,6 +58,7 @@ def create_app(config_path=None, *, settings=None, features=None):
     @app.context_processor
     def context():
         return {"settings": settings, "features": registry, "version": __version__,
+                "metadata_labels": {"title": "作品名", "author": "著者", "reading": "読み", "publisher": "出版社"},
                 "status_labels": {"ongoing": "連載中", "completed": "完結", "unknown": "未分類"},
                 "job_labels": {"scan": "蔵書スキャン", "preview": "整理プレビュー", "organize": "整理の実行", "restore": "整理の復元",
                                "conversion": "CBZ生成", "conversion_restore": "CBZ生成の取り消し"},
@@ -75,6 +79,14 @@ def create_app(config_path=None, *, settings=None, features=None):
     @app.errorhandler(KomgaError)
     def komga_error(error):
         return jsonify(error=str(error), connected=False), 502
+
+    @app.errorhandler(CatalogError)
+    def catalog_error(error):
+        response = jsonify(error=str(error))
+        response.status_code = 429 if error.retry_after else 502
+        if error.retry_after:
+            response.headers["Retry-After"] = str(error.retry_after)
+        return response
 
     @app.errorhandler(StateConflict)
     def state_conflict(error):

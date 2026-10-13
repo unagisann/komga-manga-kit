@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import time
 from threading import Lock
 from uuid import uuid4
 
@@ -53,7 +54,7 @@ class StateStore:
                 conn = sqlite3.connect(self.path, timeout=15)
                 try:
                     version = conn.execute("PRAGMA user_version").fetchone()[0]
-                    if version not in {0, 1, 2}:
+                    if version not in {0, 1, 2, 3}:
                         raise ConfigError("実行データの形式が対応バージョンと異なります。")
                     conn.execute("PRAGMA journal_mode=WAL")
                     conn.execute("PRAGMA synchronous=FULL")
@@ -76,8 +77,18 @@ class StateStore:
                         CREATE TABLE IF NOT EXISTS operation_edits (
                             namespace TEXT NOT NULL, operation_id TEXT NOT NULL, direction TEXT NOT NULL,
                             edits TEXT NOT NULL, PRIMARY KEY(namespace,operation_id,direction));
-                        PRAGMA user_version=2;
+                        CREATE TABLE IF NOT EXISTS metadata_searches (
+                            id TEXT PRIMARY KEY, namespace TEXT NOT NULL, series_id TEXT NOT NULL,
+                            cache_key TEXT NOT NULL, expires REAL NOT NULL, data TEXT NOT NULL);
+                        CREATE INDEX IF NOT EXISTS searches_by_library ON metadata_searches(namespace,cache_key);
+                        CREATE TABLE IF NOT EXISTS metadata_requests (
+                            provider TEXT PRIMARY KEY, next_allowed REAL NOT NULL);
                     """)
+                    conn.execute("BEGIN IMMEDIATE")
+                    if "provenance" not in {row[1] for row in conn.execute("PRAGMA table_info(edits)")}:
+                        conn.execute("ALTER TABLE edits ADD COLUMN provenance TEXT NOT NULL DEFAULT '{}'")
+                    conn.execute("PRAGMA user_version=3")
+                    conn.execute("DELETE FROM metadata_searches WHERE expires<=?", (time.time(),))
                     conn.commit()
                 finally:
                     conn.close()
@@ -96,9 +107,17 @@ class StateStore:
     def edits(self):
         with self.connection() as conn:
             rows = conn.execute("SELECT * FROM edits WHERE namespace=?", (self.namespace,)).fetchall()
-        return {row["series_id"]: {"fields": json.loads(row["fields"]), "revision": row["revision"]} for row in rows}
+        return {row["series_id"]: self._edit(row) for row in rows}
 
-    def save_edit(self, series_id, fields, revision, detail):
+    @staticmethod
+    def _edit(row):
+        result = {"fields": json.loads(row["fields"]), "revision": row["revision"]}
+        provenance = json.loads(row["provenance"])
+        if provenance:
+            result["provenance"] = provenance
+        return result
+
+    def save_edit(self, series_id, fields, revision, detail, *, provenance=None):
         with self.connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT revision FROM edits WHERE namespace=? AND series_id=?",
@@ -106,9 +125,11 @@ class StateStore:
             actual = row["revision"] if row else 0
             if revision != actual:
                 raise StateConflict("別の操作で作品情報が更新されました。差分を再確認してください。")
-            conn.execute("INSERT INTO edits VALUES(?,?,?,?,?) ON CONFLICT(namespace,series_id) DO UPDATE SET "
-                         "fields=excluded.fields,revision=excluded.revision,updated=excluded.updated",
-                         (self.namespace, series_id, json.dumps(fields, ensure_ascii=False), actual + 1, timestamp()))
+            conn.execute("INSERT INTO edits(namespace,series_id,fields,revision,updated,provenance) VALUES(?,?,?,?,?,?) "
+                         "ON CONFLICT(namespace,series_id) DO UPDATE SET fields=excluded.fields,revision=excluded.revision,"
+                         "updated=excluded.updated,provenance=excluded.provenance",
+                         (self.namespace, series_id, json.dumps(fields, ensure_ascii=False), actual + 1, timestamp(),
+                          json.dumps(provenance or {}, ensure_ascii=False)))
             self._event(conn, "metadata_edit", series_id, detail)
         return actual + 1
 
@@ -128,7 +149,7 @@ class StateStore:
                 return json.loads(saved["edits"])
             result = {key: dict(value) for key, value in expected.items()}
             rows = conn.execute("SELECT * FROM edits WHERE namespace=?", (self.namespace,)).fetchall()
-            actual = {row["series_id"]: {"fields": json.loads(row["fields"]), "revision": row["revision"]} for row in rows}
+            actual = {row["series_id"]: self._edit(row) for row in rows}
             for series_id, value in expected.items():
                 if actual.get(series_id, {"fields": {}, "revision": 0}) != value:
                     raise StateConflict("整理中に作品情報が編集されました。バックアップから復元してください。")
@@ -140,10 +161,15 @@ class StateStore:
                     source, target = target, source
                 fields = expected[source]["fields"]
                 for key, value in ((source, {}), (target, fields)):
-                    conn.execute("INSERT INTO edits VALUES(?,?,?,?,?) ON CONFLICT(namespace,series_id) DO UPDATE SET "
-                        "fields=excluded.fields,revision=excluded.revision,updated=excluded.updated",
-                        (self.namespace, key, json.dumps(value, ensure_ascii=False), expected[key]["revision"] + 1, timestamp()))
+                    provenance = expected[source].get("provenance", {}) if key == target else {}
+                    conn.execute("INSERT INTO edits(namespace,series_id,fields,revision,updated,provenance) VALUES(?,?,?,?,?,?) "
+                        "ON CONFLICT(namespace,series_id) DO UPDATE SET fields=excluded.fields,revision=excluded.revision,"
+                        "updated=excluded.updated,provenance=excluded.provenance",
+                        (self.namespace, key, json.dumps(value, ensure_ascii=False), expected[key]["revision"] + 1, timestamp(),
+                         json.dumps(provenance, ensure_ascii=False)))
                     result[key] = {"fields": value, "revision": expected[key]["revision"] + 1}
+                    if provenance:
+                        result[key]["provenance"] = provenance
                 self._event(conn, "metadata_relocated", source, {"target": target, "restore": restore})
             conn.execute("INSERT INTO operation_edits VALUES(?,?,?,?)",
                          (self.namespace, operation_id, direction, json.dumps(result, ensure_ascii=False)))

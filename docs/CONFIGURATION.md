@@ -20,6 +20,11 @@ YAMLは安全なローダーで読み、未知の設定項目・変数・階層�
 | `komga.api_key_env` | APIキーを読む環境変数名 |
 | `komga.timeout_seconds` | 接続タイムアウト。既定10秒 |
 | `komga.path_mappings` | Komgaの絶対パスと、ローカルのライブラリ内パスの対応 |
+| `rakuten.enabled` | 楽天Booksの書誌検索を有効化。既定false、デモでは架空データを使用 |
+| `rakuten.application_id_env` | アプリIDを読む環境変数名。既定 `RAKUTEN_APPLICATION_ID` |
+| `rakuten.access_key_env` | アクセスキーを読む環境変数名。既定 `RAKUTEN_ACCESS_KEY` |
+| `rakuten.origin` | 任意。楽天に登録した自分のサイトのオリジンをOrigin/Refererへ設定 |
+| `rakuten.timeout_seconds` | 楽天Books接続のタイムアウト。既定10秒、1〜30秒 |
 
 環境変数 `MANGA_KIT_LIBRARY_ROOT`、`MANGA_KIT_DEMO`、`KOMGA_URL` は対応するYAML値より優先する。
 `MANGA_KIT_DATA_ROOT` は `data.root` より優先する。実行データとライブラリの保存先は重複できない。
@@ -98,7 +103,8 @@ UIのルール変更は一時プレビュー。適用する設定はYAMLへ保�
 ライブラリのルートを変更すると別ライブラリとして扱う。保存先の移設時はアプリを停止し、実行データのフォルダ全体をコピーする。
 設定ファイル、実行データ、漫画ライブラリはいずれも公開用リポジトリへ追加しない。
 CLIの実行計画・途中状態・元ファイルのバックアップは `data.root/operations` に保存する。
-旧形式の状態DBは起動時にスキーマ2へ更新し、既存の編集と履歴を保持する。
+旧形式の状態DBは起動時にスキーマ3へ更新し、既存の編集・履歴・整理記録を保持する。
+スキーマ3では書誌検索キャッシュと補完元の対応付けを追加する。更新前のバックアップはアプリ停止後に取得する。
 整理実行・復元の設定と制約は [整理実行ガイド](ORGANIZATION.md) を参照する。
 CBZ生成も同じ実行データを使う。`prepare-conversion --output` で元ライブラリと実行データに重ならない出力先を指定する。
 RAR/7zにはlibarchiveが必要。手順は [CBZ生成ガイド](CONVERSION.md) を参照する。
@@ -106,6 +112,22 @@ RAR/7zにはlibarchiveが必要。手順は [CBZ生成ガイド](CONVERSION.md) 
 Composeでは `MANGA_KIT_DATA_ROOT=/state` を設定し、名前付きボリュームを使う。
 読み取り専用コンテナでも `/state` はアプリの非rootユーザーが書き込める。
 ボリュームを削除すると編集と履歴も消えるため、バックアップはコンテナ停止後に行う。
+
+## 楽天Booksの書誌検索
+
+```yaml
+rakuten:
+  enabled: true
+  application_id_env: RAKUTEN_APPLICATION_ID
+  access_key_env: RAKUTEN_ACCESS_KEY
+  origin: "" # 必要な場合は、楽天に登録した自分のサイトのオリジン
+  timeout_seconds: 10
+```
+
+アプリID・アクセスキーは環境変数から読む。値そのものをYAMLへ指定する項目はない。
+`app.demo: true` では、この設定にかかわらず架空データを使い、楽天へ通信しない。
+実ライブラリではメタデータの作品詳細から検索を明示的に実行する。起動やスキャンでは検索しない。
+登録・補完・誤照合の修正手順と検索結果の保存期間は [書誌検索・補完ガイド](METADATA_SOURCES.md) を参照。
 
 ## Komgaのパス対応
 

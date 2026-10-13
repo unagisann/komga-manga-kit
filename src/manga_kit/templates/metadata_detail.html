@@ -3,6 +3,7 @@
 {% block content %}
 <div class="page-heading"><div><p class="eyebrow">METADATA</p><h1>{{ series.title }}</h1><p>読みと作品情報を確認し、本棚の表示と整理プレビューに反映します。</p></div><a class="button" href="{{ url_for('metadata.index') }}">作品一覧へ</a></div>
 <div class="notice">保存した情報は再起動後も使えます。書庫・series.json・Komgaへの反映は今後追加します。</div>
+<section class="panel section"><div class="panel-heading"><h2>外部の作品情報</h2><a class="button" href="{{ url_for('metadata.metadata_sources', series_id=series.id) }}">候補を探す・対応付けを確認</a></div>{% if provenance %}<p>{{ '楽天Books' if provenance.provider == 'rakuten_books' else '架空の書誌データ' }} · {{ provenance.item_id }}{% if provenance.url %} · <a href="{{ provenance.url }}" target="_blank" rel="noopener noreferrer">情報源を見る</a>{% endif %}</p><p class="muted">採用した項目: {% for key in provenance.applied_fields %}{{ metadata_labels.get(key, key) }}{{ ' / ' if not loop.last else '' }}{% else %}対応付けのみ{% endfor %}{% if provenance.adjusted_fields %}（候補から調整: {% for key in provenance.adjusted_fields %}{{ metadata_labels.get(key, key) }}{{ '・' if not loop.last else '' }}{% endfor %}）{% endif %} · 取得 <time class="local-time" datetime="{{ provenance.retrieved_at }}">{{ provenance.retrieved_at }}</time></p>{% else %}<p class="muted">作品名・著者・ISBNで代表巻の書誌情報を探し、読みや出版社を項目ごとに確認して補えます。</p>{% endif %}</section>
 <div class="editor-grid">
   <section class="panel rule-panel"><div class="panel-heading"><h2>作品情報を編集</h2><span class="chip">{{ series.kana_row }}行</span></div>
     <form id="metadata-form" data-series-id="{{ series.id }}">
@@ -12,7 +13,7 @@
       <label>あらすじ<textarea name="summary" rows="6" maxlength="8000">{{ series.summary }}</textarea></label>
       <p class="form-hint">半角・全角カナは保存時にひらがなへ揃えます。読みは五十音分類と整理先に使います。</p>
       <button class="button primary" type="submit">変更内容を確認</button>
-      <button class="button" type="button" id="metadata-reset" {% if not overrides %}disabled{% endif %}>読み取った情報に戻す</button>
+      <button class="button" type="button" id="metadata-reset" {% if not overrides and not provenance %}disabled{% endif %}>読み取った情報に戻す</button>
     </form>
   </section>
   <section class="panel"><div class="panel-heading"><h2>変更内容</h2></div>

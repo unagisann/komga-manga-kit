@@ -3,7 +3,7 @@
 A self-hosted foundation for Japanese manga organization and Komga integration.
 The UI uses warm paper tones, a clay accent, responsive cards, and light/dark themes.
 
-**Status: 0.1.0.dev4, durability improvements for the third v0.1 milestone.** This is not a production v0.1 release.
+**Status: 0.1.0.dev5, the fourth v0.1 milestone.** This is not a production v0.1 release.
 The interface is currently Japanese. This document provides English setup instructions.
 No manga acquisition or download functionality is included.
 
@@ -20,6 +20,7 @@ No manga acquisition or download functionality is included.
 - CBZ copies from ZIP/CBZ, RAR/CBR, and 7z with normalized page names/order and preserved ComicInfo.xml
 - Background scan/preview jobs with persistent progress, results, and operation history
 - Manual metadata and reading edits with diff review, conflict detection, and reset
+- Rakuten Books bibliographic search, representative-volume links, field-by-field review, and saved source/timestamp information
 - Komga connection checks and read-only library/series API calls
 - Configurable Komga-to-local path mappings and explicit series matching
 - CLI, Docker Compose, tests, and original fictitious sample CBZ generation
@@ -28,9 +29,12 @@ Default settings and the web interface provide organization previews. CLI execut
 Moves support POSIX, one filesystem, and complete series only. All selected archives and `series.json` are backed up first.
 Persistence ordering and recovery limits are documented in [the durability guide](docs/DURABILITY.md) (Japanese).
 Move integration explicitly requests Komga scans. CBZ conversion copies to a separate output root and retains originals.
-Replacing original archives, migrating progress to converted copies, and external metadata writes remain unimplemented.
+Replacing original archives, migrating progress to converted copies, and writing external metadata to Komga remain unimplemented.
 Manual edits are stored in application state and used by search, kana filters, and organization previews.
-External metadata enrichment, new-volume checks, automatic completion detection, and portal features are planned.
+Reviewed bibliographic fields are saved in application state. Demo mode uses fictitious search results without network access.
+Live Rakuten Books searches require your own application ID and access key; live authentication has not yet been verified.
+See [bibliographic search and enrichment](docs/METADATA_SOURCES.md) (Japanese) for setup and limitations.
+Additional providers such as AniList, new-volume checks, automatic completion detection, and portal features are planned.
 Cover artwork currently uses generic visual placeholders rather than extracted archive covers.
 
 ## Run

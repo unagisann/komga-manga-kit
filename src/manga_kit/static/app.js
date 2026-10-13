@@ -174,7 +174,7 @@
         history.events.forEach((event) => {
           const row = node('tr');
           const labels = { metadata_edit: '作品情報の編集', job_created: '処理の受付', job_finished: '処理の終了', metadata_relocated: '編集情報の引き継ぎ' };
-          const detail = event.kind === 'metadata_edit' ? `${event.detail.changes.length}項目${event.detail.reset ? 'を元に戻しました' : 'を変更しました'}` : event.kind === 'metadata_relocated' ? (event.detail.restore ? '編集情報を元の作品へ戻しました' : '編集情報を整理先へ引き継ぎました') : event.kind === 'job_created' ? jobKinds[event.detail.kind] : jobStates[event.detail.status];
+          const detail = event.kind === 'metadata_edit' ? `${event.detail.source_action === 'linked' ? '書誌情報を対応付け · ' : event.detail.source_action === 'unlinked' ? '対応付けを解除 · ' : ''}${event.detail.changes.length}項目${event.detail.reset ? 'を元に戻しました' : 'を変更しました'}` : event.kind === 'metadata_relocated' ? (event.detail.restore ? '編集情報を元の作品へ戻しました' : '編集情報を整理先へ引き継ぎました') : event.kind === 'job_created' ? jobKinds[event.detail.kind] : jobStates[event.detail.status];
           row.append(node('td', '', labels[event.kind] || event.kind), node('td', '', detail), node('td', '', new Date(event.created).toLocaleString('ja-JP')));
           historyRows.append(row);
         });

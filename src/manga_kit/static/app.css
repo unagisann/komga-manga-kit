@@ -1696,3 +1696,26 @@ td strong {
     transition:none!important;
   }
 }
+
+.source-search { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+.source-search .button { justify-self:start; }
+.source-results { display:grid; gap:12px; }
+.source-card { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:16px; border:1px solid var(--border); border-radius:12px; }
+.source-card > div { min-width:0; overflow-wrap:anywhere; }
+.source-card h3 { margin:0 0 6px; font-size:16px; }
+.source-card p { margin:4px 0; }
+.source-card .button { flex-shrink:0; }
+.source-pages { display:flex; align-items:center; justify-content:center; gap:16px; margin-top:18px; }
+.source-field-list { display:grid; gap:14px; margin-bottom:20px; }
+.source-field { display:grid; grid-template-columns:160px minmax(0,1fr); gap:16px; align-items:center; }
+.source-check { display:flex; gap:10px; align-items:center; }
+.source-check input { width:18px; height:18px; accent-color:var(--accent); }
+.source-value { display:grid; gap:6px; }
+.source-value input { width:100%; min-width:0; padding:12px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text); font:inherit; }
+#source-reference, #source-review-message { overflow-wrap:anywhere; }
+.app-footer { flex-wrap:wrap; }
+@media(max-width:680px) {
+  .source-search, .source-field { grid-template-columns:1fr; }
+  .source-card { align-items:flex-start; flex-direction:column; gap:10px; }
+  .source-card .button { width:100%; }
+}

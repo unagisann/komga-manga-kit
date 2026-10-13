@@ -25,3 +25,9 @@ komga:
   timeout_seconds: 10
   path_mappings: []
   # Example: [{komga: /data/manga, local: /library}]
+rakuten:
+  enabled: false
+  application_id_env: RAKUTEN_APPLICATION_ID
+  access_key_env: RAKUTEN_ACCESS_KEY
+  origin: "" # Optional registered website origin, e.g. https://manga.example.com
+  timeout_seconds: 10

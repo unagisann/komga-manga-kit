@@ -43,6 +43,9 @@ def apply_edits(result, edits):
                 setattr(series, key, value)
         if fields:
             series.sources.append("manual")
+        provenance = edits.get(series.id, {}).get("provenance", {})
+        if provenance.get("applied_fields"):
+            series.sources.append("楽天Books" if provenance["provider"] == "rakuten_books" else "架空の書誌データ")
     return result
 
 
@@ -62,7 +65,8 @@ class MetadataService:
     def inspect(self, series_id):
         base, current, edit = self.series(series_id)
         return {"series": current.to_dict(), "original": {key: getattr(base, key) for key in FIELDS},
-                "overrides": edit["fields"], "revision": edit["revision"], "base_fingerprint": fingerprint(base)}
+                "overrides": edit["fields"], "revision": edit["revision"], "base_fingerprint": fingerprint(base),
+                "provenance": edit.get("provenance", {})}
 
     def preview(self, series_id, fields=None, *, reset=False, refresh=False):
         fields = {} if reset else validate_fields(fields)
@@ -76,16 +80,26 @@ class MetadataService:
                 "changes": changes, "before_row": current.row, "after_row": after.row,
                 "fields": overrides, "reset": reset, "source": "manual"}
 
-    def save(self, series_id, fields, revision, base_fingerprint, *, reset=False):
+    def save(self, series_id, fields, revision, base_fingerprint, *, reset=False, provenance=None):
         with self.store.editing():
-            return self._save(series_id, fields, revision, base_fingerprint, reset=reset)
+            return self._save(series_id, fields, revision, base_fingerprint, reset=reset, provenance=provenance)
 
-    def _save(self, series_id, fields, revision, base_fingerprint, *, reset=False):
+    def _save(self, series_id, fields, revision, base_fingerprint, *, reset=False, provenance=None):
         if type(revision) is not int or revision < 0 or not isinstance(base_fingerprint, str):
             raise ConfigError("保存前に差分プレビューを取得してください。")
         preview = self.preview(series_id, fields, reset=reset, refresh=True)
         if preview["base_fingerprint"] != base_fingerprint:
             raise StateConflict("書庫の情報が更新されました。差分を再確認してください。")
-        updated = self.store.save_edit(series_id, preview["fields"], revision,
-                                       {"changes": preview["changes"], "reset": reset})
+        source_action = None if provenance is None else "linked" if provenance else "unlinked"
+        if provenance is None:
+            provenance = {} if reset else deepcopy(self.store.edits().get(series_id, {}).get("provenance", {}))
+            if provenance:
+                changed = {item["field"] for item in preview["changes"]}
+                for key in ("applied_fields", "adjusted_fields"):
+                    provenance[key] = [field for field in provenance.get(key, []) if field not in changed]
+        detail = {"changes": preview["changes"], "reset": reset, "provenance": provenance}
+        if source_action:
+            detail["source_action"] = source_action
+        updated = self.store.save_edit(series_id, preview["fields"], revision, detail,
+                                       provenance=provenance)
         return {**self.inspect(series_id), "revision": updated}

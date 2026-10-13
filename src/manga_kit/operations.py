@@ -229,7 +229,7 @@ class OperationService:
             expected = {key: edits.get(key, {"fields": {}, "revision": 0}) for group in groups
                         for key in (group["source_id"], group["target_id"])}
             for group in groups:
-                if group["source_id"] != group["target_id"] and expected[group["target_id"]]["fields"]:
+                if group["source_id"] != group["target_id"] and (expected[group["target_id"]]["fields"] or expected[group["target_id"]].get("provenance")):
                     raise StateConflict("整理先の作品に保存済みの編集があります。先に確認してください。")
             native = self.guard.snapshot(entries, groups)
             plan = {"id": uuid4().hex, "kind": self.kind, "namespace": self.store.namespace, "created": timestamp(),
