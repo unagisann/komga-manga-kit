@@ -123,6 +123,7 @@ def api_settings():
     return jsonify(name=config.name, demo=config.demo, library_root=str(config.library_root),
                    max_files=config.max_files, layout=asdict(config.layout), komga_url=config.komga_url,
                    api_key_configured=bool(os.getenv(config.api_key_env)), preview_only=True,
+                   execution_enabled=config.execution_enabled, execution_interface="cli",
                    data_root=str(config.data_root), path_mappings=[{"komga": m.komga, "local": str(m.local)}
                                                                   for m in config.path_mappings])
 

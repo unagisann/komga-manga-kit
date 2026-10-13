@@ -2,7 +2,7 @@
 {% block title %}蔵書整理{% endblock %}
 {% block content %}
 <div class="page-heading"><div><p class="eyebrow">ORGANIZE</p><h1>本棚のルールをつくる</h1><p>フォルダ名と階層を変えて、整理後の配置を確認できます。</p></div><span class="badge">{{ ui.icon('info', 16) }}プレビュー</span></div>
-<div class="notice">現在は整理結果の確認まで利用できます。実際のファイル移動・書庫変換は今後のv0.1で追加します。</div>
+<div class="notice">この画面は配置のプレビュー専用です。実際の移動・バックアップ・復元は、明示的に有効にしたCLIから実行できます。手順はREADMEの整理実行ガイドを参照してください。</div>
 <p id="plan-job-status" class="form-hint" role="status">更新したプレビューは<a href="{{ url_for('jobs.index') }}">処理履歴</a>に保存します。</p>
 {{ ui.scan_notice(scan) }}
 <div class="workspace"><section class="panel rule-panel"><div class="panel-heading"><h2>整理ルール</h2><span class="muted">01</span></div><form id="layout-form">

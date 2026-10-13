@@ -9,6 +9,9 @@ from .jobs import JobService
 from .organizer import plan_organization
 from .sample import create_sample_library
 from .state import StateStore
+from .state import StateConflict
+from .komga import KomgaError
+from .operations import OperationService
 
 
 def main():
@@ -26,6 +29,14 @@ def main():
     jobs.add_argument("--limit", type=int, default=50)
     job = commands.add_parser("job", help="保存した処理の結果を全件表示")
     job.add_argument("id")
+    prepare = commands.add_parser("prepare", help="整理の実行計画と変更前情報を保存")
+    prepare.add_argument("--series", action="append", help="対象の作品ID（複数指定可能）")
+    for name, help_text in [("execute", "確認した整理計画をバックアップ後に実行"),
+                            ("restore", "整理操作を上書きせず復元"), ("operation", "保存した整理操作を表示")]:
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("id")
+        if name != "operation":
+            command.add_argument("--confirm", required=True, help="確認した計画のdigest")
     sample = commands.add_parser("sample", help="架空のサンプルCBZを空のフォルダに生成")
     sample.add_argument("--output", type=Path, default=Path("var/sample-library"))
     args = parser.parse_args()
@@ -41,7 +52,15 @@ def main():
             store = StateStore(config)
             store.recover()
             library = LibraryService(config, store=store)
-            if args.command == "jobs":
+            if args.command in {"prepare", "execute", "restore", "operation"}:
+                service = OperationService(config, store)
+                if args.command == "prepare":
+                    output = service.prepare(selected=args.series)
+                elif args.command == "operation":
+                    output = service.inspect(args.id)
+                else:
+                    output = getattr(service, args.command)(args.id, args.confirm)
+            elif args.command == "jobs":
                 if not 1 <= args.limit <= 200:
                     raise ConfigError("limit は1〜200で指定してください。")
                 output = {"jobs": store.jobs(args.limit)}
@@ -65,7 +84,7 @@ def main():
                           if args.command == "scan" else plan_organization(result.series, config.layout,
                                                                           None if config.demo else config.library_root))
             print(json.dumps(output, ensure_ascii=False, indent=2))
-    except (ConfigError, ValueError, OSError) as exc:
+    except (ConfigError, StateConflict, KomgaError, ValueError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     return 0

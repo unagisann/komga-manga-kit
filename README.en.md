@@ -3,7 +3,7 @@
 A self-hosted foundation for Japanese manga organization and Komga integration.
 The UI uses warm paper tones, a clay accent, responsive cards, and light/dark themes.
 
-**Status: 0.1.0.dev1, the first v0.1 milestone.** This is not a production v0.1 release.
+**Status: 0.1.0.dev2, the second v0.1 milestone.** This is not a production v0.1 release.
 The interface is currently Japanese. This document provides English setup instructions.
 No manga acquisition or download functionality is included.
 
@@ -14,15 +14,19 @@ No manga acquisition or download functionality is included.
 - ComicInfo.xml reading for CBZ/ZIP and per-series `series.json` overrides
 - Configurable status folders, series names, book names, and folder hierarchies
 - Organization previews, duplicate-target detection, and existing-file checks
+- Opt-in CLI moves with confirmed plans, full backups, and restore without overwriting existing files
+- Completed-folder organization with verified Komga 1.29.0 reading-progress and locked-metadata preservation
 - Background scan/preview jobs with persistent progress, results, and operation history
 - Manual metadata and reading edits with diff review, conflict detection, and reset
 - Komga connection checks and read-only library/series API calls
 - Configurable Komga-to-local path mappings and explicit series matching
 - CLI, Docker Compose, tests, and original fictitious sample CBZ generation
 
-Organization is preview-only. No books are moved, converted, deleted, or written back to Komga.
+Default settings and the web interface provide organization previews. CLI execution requires `execution.enabled: true`.
+Moves support POSIX, one filesystem, and complete series only. All selected archives and `series.json` are backed up first.
+Komga integration explicitly requests scans; archive conversion and external metadata writes are not implemented.
 Manual edits are stored in application state and used by search, kana filters, and organization previews.
-External metadata enrichment, new-volume checks, safe execution, and portal features are planned.
+External metadata enrichment, new-volume checks, automatic completion detection, and portal features are planned.
 Cover artwork currently uses generic visual placeholders rather than extracted archive covers.
 
 ## Run
@@ -90,11 +94,45 @@ Disable demo mode to scan those generated books. The UI shows the first 200 prev
 The History page and organization preview updates save jobs and results. `scan --record` / `plan --record`
 return the saved job including its ID; `job JOB_ID` retrieves its full result. CLI commands also use saved metadata edits.
 
+## Execute and restore
+
+Use a dedicated test library first. Set `app.demo: false`, a writable `library.root`, separate `data.root`,
+and `execution.enabled: true`. The regular Compose library mount remains read-only; execute from a host-side
+CLI configuration using the same application state, or explicitly configure a dedicated writable environment.
+Rules entered on the web page are previews only; save execution rules in YAML.
+
+```bash
+.venv/bin/manga-kit --config /path/to/execute.yaml scan
+.venv/bin/manga-kit --config /path/to/execute.yaml prepare --series SERIES_ID
+# Review plan.entries and plan.groups; copy plan.id and digest from the result.
+.venv/bin/manga-kit --config /path/to/execute.yaml execute OPERATION_ID --confirm DIGEST
+.venv/bin/manga-kit --config /path/to/execute.yaml operation OPERATION_ID
+.venv/bin/manga-kit --config /path/to/execute.yaml restore OPERATION_ID --confirm DIGEST
+```
+
+Omitting `--series` selects all series, including unchanged ones. A blocked item prevents execution.
+No series splitting/merging, symlinks, cross-filesystem moves, or overwrite are supported.
+Other sidecar files and empty folders remain in place. File bytes, permissions, and modification times are preserved.
+Backups and journals are stored under `data.root/operations`; retain this directory and the state database for recovery.
+Changed destinations, conflicting original paths, or corrupt backups stop restore before any file changes.
+Stop other writers and readers during execution/restore; incomplete operations are recovered explicitly with `restore`.
+After a completed move, restore preserves reading progress recorded since that move.
+
+For Komga integration, use 1.29.0 with an administrator API key and an exact library-root path mapping.
+Enable file hashing and complete analysis/hashing before preparing. Disable startup/periodic scans, automatic trash
+emptying, CBZ conversion, and extension repair. Stale hashes, duplicate content anywhere on the server, or matching
+trash entries prevent execution. Book/series IDs and some internal creation timestamps change after moves;
+external tools that retain these IDs are not covered by the tests.
+See the [Japanese organization guide](docs/ORGANIZATION.md) for detailed recovery and opt-in integration testing.
+
 ## Compatibility and extension
 
 The client uses `X-API-Key`, `GET /api/v1/libraries`, and `GET /api/v1/series`, following the
-[official Komga OpenAPI](https://github.com/gotson/komga/blob/master/komga/docs/openapi.json).
-Tests use representative mock responses. No real Komga release has been compatibility-tested yet.
+[official Komga 1.29.0 OpenAPI](https://github.com/gotson/komga/blob/1.29.0/komga/docs/openapi.json).
+An isolated ARM64 Komga 1.29.0 server was tested with fictitious archives: connection/matching,
+renaming, completed-folder moves, and restore including deleted-target backup recovery.
+Two users' unread/partial/completed states, reading dates, latest progress, and locked series metadata were checked.
+Other versions, production-scale libraries, and external tools referencing Komga IDs remain unverified.
 The tool does not open Komga's database directly.
 
 Features register a Flask blueprint and navigation entry. Metadata providers return proposals without writes.

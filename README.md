@@ -3,7 +3,7 @@
 日本語漫画の蔵書整理と、Komga連携のためのセルフホスト用OSS基盤です。
 紙色・クレイ色のUI、五十音の絞り込み、自由に設定できるフォルダ・命名ルールを備えています。
 
-**現在: v0.1の第1段階（0.1.0.dev1）。** 本番向けのv0.1リリースではありません。
+**現在: v0.1の第2段階（0.1.0.dev2）。** 本番向けのv0.1リリースではありません。
 デモは外部サービスやAPIキーなしで起動します。漫画のダウンロード機能は含みません。
 
 [English README](README.en.md) · [ロードマップ](docs/ROADMAP.md) · [構成・拡張](docs/ARCHITECTURE.md) · [設定](docs/CONFIGURATION.md)
@@ -16,6 +16,8 @@
 - 半角/全角カナの正規化と、読みからの五十音分類
 - 状態フォルダ名、作品フォルダ名、巻名、状態別階層の設定
 - 整理プレビュー、巻数不明・整理先重複・既存ファイルの衝突検出
+- CLIで確認した計画の命名・移動、全対象のバックアップ、上書きしない復元（明示的な有効化が必要）
+- 完結フォルダへの配置と、検証済みKomga 1.29.0の既読位置・ロックした情報の引き継ぎ
 - スキャン・整理プレビューの処理ジョブ、冊数の進捗、結果・操作履歴の保存
 - 作品名・著者・読み・状態・あらすじ・出版社の手動編集、差分確認、編集の解除
 - Komga APIキー接続の確認・ライブラリ一覧・作品一覧API
@@ -23,9 +25,11 @@
 - ライト/ダーク表示、レスポンシブUI、架空サンプルCBZの生成
 - Docker Compose、CLI、基本テスト、機能/メタデータ取得元の拡張口
 
-整理は**プレビュー専用**です。既存ファイルの移動・削除・書庫変換やKomgaへの書き込みは行いません。
+既定の設定とWeb画面の整理は**プレビュー専用**です。CLIの実行は `execution.enabled: true` で有効にします。
+実行はPOSIX・同一ファイルシステム内・作品単位に限り、全対象をバックアップしてから移動します。
+Komga連携時は明示的にスキャンを要求します。書庫変換や外部補完情報の書き込みは未対応です。
 手動編集はこのツールの実行データへ保存し、蔵書検索・五十音分類・整理プレビューに反映します。
-外部からのメタデータ補完、AIによる読み生成、新刊チェック、完結移動、ポータル機能は今後追加します。
+外部からのメタデータ補完、AIによる読み生成、新刊チェック、完結判定の自動化、ポータル機能は今後追加します。
 現段階の表紙は共通デザインで描画し、実際の書庫表紙の抽出は未対応です。
 
 ## 起動
@@ -152,13 +156,34 @@ UIの整理プレビューは先頭200件を表示します。全件は `plan` �
 `scan --record` / `plan --record` はジョブと結果を保存し、ジョブIDを含むJSONを返します。
 保存した結果の全件は `job JOB_ID` で確認できます。CLIも保存済みの作品情報を使います。
 
+### 整理を実行・復元する
+
+まずテスト用の書庫で [整理実行ガイド](docs/ORGANIZATION.md) の設定・制約を確認してください。
+`app.demo: false`、書き込み可能なライブラリ、別の保存先 `data.root`、`execution.enabled: true` が必要です。
+通常のComposeのライブラリマウントは読み取り専用のため、CLIの移動はホスト側の専用設定などで行います。
+
+```bash
+.venv/bin/manga-kit --config /path/to/execute.yaml prepare --series SERIES_ID
+# 出力の plan.entries と plan.groups を確認し、plan.id と digest を控えます。
+.venv/bin/manga-kit --config /path/to/execute.yaml execute OPERATION_ID --confirm DIGEST
+.venv/bin/manga-kit --config /path/to/execute.yaml operation OPERATION_ID
+.venv/bin/manga-kit --config /path/to/execute.yaml restore OPERATION_ID --confirm DIGEST
+```
+
+途中で停止した場合も同じ操作IDから復元できます。移動後に変更されたファイルや復元先の衝突は上書きしません。
+`data.root` の操作記録・バックアップは、復元が不要になるまで保持してください。
+
 ## Komga互換性
 
-接続部分は `X-API-Key`、`GET /api/v1/libraries`、`GET /api/v1/series` を使用します。
-実装時に[Komga公式OpenAPI](https://github.com/gotson/komga/blob/master/komga/docs/openapi.json)を確認し、
-テストでは代表的な応答を模擬しています。**実機で検証済みのKomgaバージョンはまだありません。**
-バージョン別の互換性保証は、v1.0までに実機で検証して公開します。
-KomgaのDBへ直接アクセスしません。
+接続は `X-API-Key` と [Komga 1.29.0公式OpenAPI](https://github.com/gotson/komga/blob/1.29.0/komga/docs/openapi.json) を使います。
+隔離したARM64環境の **Komga 1.29.0** で、接続・作品照合・命名・完結フォルダへの移動・復元を検証しました。
+複数ユーザーの未読・途中・読了、最新の既読位置、ロックした作品情報を確認しています。
+移動時にはKomga側の書籍/作品IDや一部の管理日時が変わります。ID参照の外部連携は未検証です。
+
+連携して実行する場合は1.29.0に限定し、ハッシュ計算済み・自動スキャン無効・ゴミ箱自動削除無効・自動変換無効を要求します。
+現在の書庫とKomgaのハッシュが異なる場合、同じ内容の書籍やゴミ箱の候補がある場合は中止します。
+実行後にAPIで再スキャンし、Komgaの内容一致による復元と既読情報を確認します。DBへ直接アクセスしません。
+検証の範囲と再実行手順は [検証記録](docs/VALIDATION.md) と [整理実行ガイド](docs/ORGANIZATION.md) を参照してください。
 
 ## 公開範囲
 

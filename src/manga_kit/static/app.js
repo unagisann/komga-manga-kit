@@ -28,7 +28,7 @@
     return result;
   };
   const jobStates = { queued: '待機中', running: '処理中', succeeded: '完了', failed: '失敗', interrupted: '中断' };
-  const jobKinds = { scan: '蔵書スキャン', preview: '整理プレビュー' };
+  const jobKinds = { scan: '蔵書スキャン', preview: '整理プレビュー', organize: '整理の実行', restore: '整理の復元' };
   const statusLabels = { ongoing: '連載中', completed: '完結', unknown: '未分類' };
   const waitJob = async (job, update) => {
     while (['queued', 'running'].includes(job.status)) {
@@ -173,8 +173,8 @@
         const historyRows = $('#history-table'); historyRows.replaceChildren();
         history.events.forEach((event) => {
           const row = node('tr');
-          const labels = { metadata_edit: '作品情報の編集', job_created: '処理の受付', job_finished: '処理の終了' };
-          const detail = event.kind === 'metadata_edit' ? `${event.detail.changes.length}項目${event.detail.reset ? 'を元に戻しました' : 'を変更しました'}` : event.kind === 'job_created' ? jobKinds[event.detail.kind] : jobStates[event.detail.status];
+          const labels = { metadata_edit: '作品情報の編集', job_created: '処理の受付', job_finished: '処理の終了', metadata_relocated: '編集情報の引き継ぎ' };
+          const detail = event.kind === 'metadata_edit' ? `${event.detail.changes.length}項目${event.detail.reset ? 'を元に戻しました' : 'を変更しました'}` : event.kind === 'metadata_relocated' ? (event.detail.restore ? '編集情報を元の作品へ戻しました' : '編集情報を整理先へ引き継ぎました') : event.kind === 'job_created' ? jobKinds[event.detail.kind] : jobStates[event.detail.status];
           row.append(node('td', '', labels[event.kind] || event.kind), node('td', '', detail), node('td', '', new Date(event.created).toLocaleString('ja-JP')));
           historyRows.append(row);
         });

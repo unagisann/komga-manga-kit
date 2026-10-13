@@ -52,7 +52,7 @@ class StateStore:
                 conn = sqlite3.connect(self.path, timeout=15)
                 try:
                     version = conn.execute("PRAGMA user_version").fetchone()[0]
-                    if version not in {0, 1}:
+                    if version not in {0, 1, 2}:
                         raise ConfigError("実行データの形式が対応バージョンと異なります。")
                     conn.execute("PRAGMA journal_mode=WAL")
                     conn.executescript("""
@@ -71,7 +71,10 @@ class StateStore:
                             kind TEXT NOT NULL, subject TEXT NOT NULL, created TEXT NOT NULL,
                             detail TEXT NOT NULL);
                         CREATE INDEX IF NOT EXISTS events_by_library ON events(namespace, id);
-                        PRAGMA user_version=1;
+                        CREATE TABLE IF NOT EXISTS operation_edits (
+                            namespace TEXT NOT NULL, operation_id TEXT NOT NULL, direction TEXT NOT NULL,
+                            edits TEXT NOT NULL, PRIMARY KEY(namespace,operation_id,direction));
+                        PRAGMA user_version=2;
                     """)
                     conn.commit()
                 finally:
@@ -104,6 +107,69 @@ class StateStore:
                          (self.namespace, series_id, json.dumps(fields, ensure_ascii=False), actual + 1, timestamp()))
             self._event(conn, "metadata_edit", series_id, detail)
         return actual + 1
+
+    def verify_edits(self, expected):
+        actual = self.edits()
+        for series_id, value in expected.items():
+            if actual.get(series_id, {"fields": {}, "revision": 0}) != value:
+                raise StateConflict("確認後に作品情報が編集されました。計画を作り直してください。")
+
+    def relocate_edits(self, groups, expected, operation_id, *, restore=False):
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            direction = "restore" if restore else "move"
+            saved = conn.execute("SELECT edits FROM operation_edits WHERE namespace=? AND operation_id=? AND direction=?",
+                                 (self.namespace, operation_id, direction)).fetchone()
+            if saved:
+                return json.loads(saved["edits"])
+            result = {key: dict(value) for key, value in expected.items()}
+            rows = conn.execute("SELECT * FROM edits WHERE namespace=?", (self.namespace,)).fetchall()
+            actual = {row["series_id"]: {"fields": json.loads(row["fields"]), "revision": row["revision"]} for row in rows}
+            for series_id, value in expected.items():
+                if actual.get(series_id, {"fields": {}, "revision": 0}) != value:
+                    raise StateConflict("整理中に作品情報が編集されました。バックアップから復元してください。")
+            for group in groups:
+                source, target = group["source_id"], group["target_id"]
+                if source == target:
+                    continue
+                if restore:
+                    source, target = target, source
+                fields = expected[source]["fields"]
+                for key, value in ((source, {}), (target, fields)):
+                    conn.execute("INSERT INTO edits VALUES(?,?,?,?,?) ON CONFLICT(namespace,series_id) DO UPDATE SET "
+                        "fields=excluded.fields,revision=excluded.revision,updated=excluded.updated",
+                        (self.namespace, key, json.dumps(value, ensure_ascii=False), expected[key]["revision"] + 1, timestamp()))
+                    result[key] = {"fields": value, "revision": expected[key]["revision"] + 1}
+                self._event(conn, "metadata_relocated", source, {"target": target, "restore": restore})
+            conn.execute("INSERT INTO operation_edits VALUES(?,?,?,?)",
+                         (self.namespace, operation_id, direction, json.dumps(result, ensure_ascii=False)))
+        return result
+
+    def operation_edits(self, operation_id, direction="move"):
+        with self.connection() as conn:
+            row = conn.execute("SELECT edits FROM operation_edits WHERE namespace=? AND operation_id=? AND direction=?",
+                               (self.namespace, operation_id, direction)).fetchone()
+        return json.loads(row["edits"]) if row else None
+
+    @contextmanager
+    def editing(self):
+        if os.name != "posix":
+            yield
+            return
+        import fcntl
+        directory = self.path.parent / "operations" / self.namespace
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not directory.resolve().is_relative_to(self.path.parent.resolve()):
+            raise ConfigError("編集のロック保存先が実行データ外を指しています。")
+        fd = os.open(directory / "lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise StateConflict("整理・復元の実行中は作品情報を保存できません。完了後に再確認してください。") from exc
+            yield
+        finally:
+            os.close(fd)
 
     def _event(self, conn, kind, subject, detail):
         conn.execute("INSERT INTO events(namespace,kind,subject,created,detail) VALUES(?,?,?,?,?)",

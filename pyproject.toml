@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "komga-manga-kit"
-version = "0.1.0.dev1"
+version = "0.1.0.dev2"
 description = "A configurable Japanese manga library toolkit and Komga companion."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-dependencies = ["Flask>=3.1,<4", "PyYAML>=6,<7", "requests>=2.32.3,<3", "gunicorn>=23,<24", "defusedxml>=0.7,<1"]
+dependencies = ["Flask>=3.1,<4", "PyYAML>=6,<7", "requests>=2.32.3,<3", "gunicorn>=23,<24", "defusedxml>=0.7,<1", "xxhash>=3.5,<4"]
 
 [project.scripts]
 manga-kit = "manga_kit.cli:main"

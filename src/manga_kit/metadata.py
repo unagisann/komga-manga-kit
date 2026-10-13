@@ -77,6 +77,10 @@ class MetadataService:
                 "fields": overrides, "reset": reset, "source": "manual"}
 
     def save(self, series_id, fields, revision, base_fingerprint, *, reset=False):
+        with self.store.editing():
+            return self._save(series_id, fields, revision, base_fingerprint, reset=reset)
+
+    def _save(self, series_id, fields, revision, base_fingerprint, *, reset=False):
         if type(revision) is not int or revision < 0 or not isinstance(base_fingerprint, str):
             raise ConfigError("保存前に差分プレビューを取得してください。")
         preview = self.preview(series_id, fields, reset=reset, refresh=True)

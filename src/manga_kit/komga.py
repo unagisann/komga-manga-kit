@@ -1,4 +1,4 @@
-"""Small read-only Komga client with no global credentials."""
+"""Komga requests with private credentials and sanitized upstream errors."""
 import os
 import requests
 
@@ -49,3 +49,18 @@ class KomgaClient:
                 or any(not isinstance(entry, dict) for entry in result["content"])):
             raise KomgaError("Komgaの作品応答形式が想定と異なります。")
         return result
+
+    def request(self, method, endpoint, body=None, **params):
+        if method == "GET":
+            return self.get(endpoint, **params)
+        if not self.settings.komga_url or not os.getenv(self.settings.api_key_env, ""):
+            raise KomgaError("Komgaの接続先とAPIキーを設定してください。")
+        try:
+            response = self.session.request(method, self.settings.komga_url + endpoint, params=params, json=body,
+                headers={"X-API-Key": os.environ[self.settings.api_key_env], "Accept": "application/json"},
+                timeout=self.settings.timeout_seconds, allow_redirects=False)
+            if not 200 <= response.status_code < 300:
+                raise KomgaError("Komgaの操作に失敗しました。接続先と権限を確認してください。")
+            return response.json() if response.content else None
+        except (requests.RequestException, ValueError) as exc:
+            raise KomgaError("Komgaの操作を完了できませんでした。状態を確認してください。") from exc

@@ -88,6 +88,7 @@ class Settings:
     timeout_seconds: int = 10
     data_root: Path = field(default_factory=lambda: Path.cwd() / "var" / "state")
     path_mappings: tuple[PathMapping, ...] = ()
+    execution_enabled: bool = False
 
     def validate_storage(self):
         library, data = self.library_root.resolve(), self.data_root.resolve()
@@ -113,15 +114,15 @@ def load_settings(path: str | Path | None = None) -> Settings:
             raw = {} if loaded is None else loaded
         except (OSError, yaml.YAMLError) as exc:
             raise ConfigError("設定ファイルを読み込めません。") from exc
-    if not isinstance(raw, dict) or set(raw) - {"app", "library", "layout", "komga", "data"}:
-        raise ConfigError("設定は app / library / layout / komga / data のマッピングで指定してください。")
-    sections = {name: raw.get(name, {}) for name in ("app", "library", "layout", "komga", "data")}
+    if not isinstance(raw, dict) or set(raw) - {"app", "library", "layout", "komga", "data", "execution"}:
+        raise ConfigError("設定は app / library / layout / komga / data / execution のマッピングで指定してください。")
+    sections = {name: raw.get(name, {}) for name in ("app", "library", "layout", "komga", "data", "execution")}
     if any(not isinstance(value, dict) for value in sections.values()):
         raise ConfigError("設定の各セクションはマッピングで指定してください。")
     valid_keys = {"app": {"name", "demo"}, "library": {"root", "max_files"},
                   "layout": {"status_folders", "series", "book", "ongoing", "completed", "unknown"},
                   "komga": {"base_url", "api_key_env", "timeout_seconds", "path_mappings"},
-                  "data": {"root"}}
+                  "data": {"root"}, "execution": {"enabled"}}
     for section, value in sections.items():
         if set(value) - valid_keys[section]:
             raise ConfigError(f"{section} に未知の設定項目があります。")
@@ -187,5 +188,8 @@ def load_settings(path: str | Path | None = None) -> Settings:
         if not local.is_absolute():
             local = source.parent / local
         mappings.append(PathMapping(str(parsed_path), local.resolve()))
+    enabled = sections["execution"].get("enabled", False)
+    if type(enabled) is not bool:
+        raise ConfigError("execution.enabled は true / false で指定してください。")
     return Settings(name, demo, root.resolve(), limit, Layout(**layout).validate(), url.rstrip("/"), key_env,
-                    timeout, data_root.resolve(), tuple(mappings)).validate_storage()
+                    timeout, data_root.resolve(), tuple(mappings), enabled).validate_storage()
