@@ -29,6 +29,7 @@ def digest(value):
 
 
 class OperationService:
+    kind = "organize"
     def __init__(self, settings, store=None, client=None):
         self.settings = settings.validate_storage()
         self.store = store or StateStore(settings)
@@ -163,7 +164,7 @@ class OperationService:
                 if group["source_id"] != group["target_id"] and expected[group["target_id"]]["fields"]:
                     raise StateConflict("整理先の作品に保存済みの編集があります。先に確認してください。")
             native = self.guard.snapshot(entries, groups)
-            plan = {"id": uuid4().hex, "namespace": self.store.namespace, "created": timestamp(),
+            plan = {"id": uuid4().hex, "kind": self.kind, "namespace": self.store.namespace, "created": timestamp(),
                     "root_identity": fs.identity, "komga_url": self.settings.komga_url, "layout": asdict(rules),
                     "entries": entries, "groups": groups, "edits": expected, "komga": native}
             operation = {"plan": plan, "digest": digest(plan), "status": "planned", "moved_count": 0, "edits_after": None}
@@ -175,6 +176,8 @@ class OperationService:
         operation = self.inspect(operation_id)
         if confirmation != operation["digest"]:
             raise ConfigError("確認した計画の digest を --confirm に指定してください。")
+        if operation["plan"].get("kind", "organize") != self.kind:
+            raise ConfigError("操作の種類に合った実行・復元処理を使用してください。")
         if fs.identity != operation["plan"]["root_identity"]:
             raise StateConflict("ライブラリのルートが差し替えられています。")
         return operation

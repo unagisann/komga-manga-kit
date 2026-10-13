@@ -11,7 +11,7 @@ YAMLは安全なローダーで読み、未知の設定項目・変数・階層�
 | `library.root` | 漫画の保存先。相対パスは設定ファイル基準 |
 | `library.max_files` | スキャン上限。既定20000、最大100000 |
 | `data.root` | 編集・処理履歴の保存先。既定 `./var/state`、設定ファイル基準 |
-| `execution.enabled` | CLIでの整理実行・復元を有効化。既定false、Web画面はプレビュー専用 |
+| `execution.enabled` | CLIの整理実行・復元・CBZ生成/取り消しを有効化。既定false、Web画面はプレビュー専用 |
 | `layout.status_folders` | 連載中・完結・未分類のフォルダ名 |
 | `layout.series` | 作品フォルダ名 |
 | `layout.book` | 巻ファイル名。拡張子の変数は必須 |
@@ -100,6 +100,8 @@ UIのルール変更は一時プレビュー。適用する設定はYAMLへ保�
 CLIの実行計画・途中状態・元ファイルのバックアップは `data.root/operations` に保存する。
 旧形式の状態DBは起動時にスキーマ2へ更新し、既存の編集と履歴を保持する。
 整理実行・復元の設定と制約は [整理実行ガイド](ORGANIZATION.md) を参照する。
+CBZ生成も同じ実行データを使う。`prepare-conversion --output` で元ライブラリと実行データに重ならない出力先を指定する。
+RAR/7zにはlibarchiveが必要。手順は [CBZ生成ガイド](CONVERSION.md) を参照する。
 
 Composeでは `MANGA_KIT_DATA_ROOT=/state` を設定し、名前付きボリュームを使う。
 読み取り専用コンテナでも `/state` はアプリの非rootユーザーが書き込める。

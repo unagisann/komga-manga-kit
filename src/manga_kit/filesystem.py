@@ -30,6 +30,12 @@ class LibraryFilesystem:
     def close(self):
         os.close(self.fd)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
     @contextmanager
     def parent(self, relative, create=False):
         if not isinstance(relative, str):
@@ -67,6 +73,16 @@ class LibraryFilesystem:
                     raise StateConflict("整理先または復元先に同じ名前・表記違いのファイルがあります。")
         except FileNotFoundError:
             pass
+
+    @contextmanager
+    def open_read(self, relative):
+        with self.parent(relative) as (parent, name):
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+            with os.fdopen(fd, "rb", buffering=0) as source:
+                info = os.fstat(source.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_dev != self.identity["device"]:
+                    raise ConfigError("通常ファイル以外・別ファイルシステムは読み取れません。")
+                yield source
 
     def snapshot(self, relative):
         with self.parent(relative) as (parent, name):
@@ -162,7 +178,8 @@ class LibraryFilesystem:
                 os.fsync(fd)
                 if before_publish is not None:
                     created = os.fstat(fd)
-                    before_publish(dict(expected, inode=created.st_ino, device=created.st_dev))
+                    before_publish(dict(expected, inode=created.st_ino, device=created.st_dev,
+                                        mtime_ns=created.st_mtime_ns, mode=stat.S_IMODE(created.st_mode)))
                 os.link(temporary, name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
                 os.fsync(parent)
             finally:

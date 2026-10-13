@@ -12,7 +12,7 @@ import zipfile
 from manga_kit import create_app
 from manga_kit.config import ConfigError, Settings, load_settings
 from manga_kit.filesystem import LibraryFilesystem
-from manga_kit.operations import OperationService
+from manga_kit.operations import OperationService, digest
 from manga_kit.state import StateConflict, StateStore
 
 
@@ -254,6 +254,17 @@ class OperationTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             load_settings(config)
         self.assertFalse(Settings().execution_enabled)
+
+    def test_legacy_dev2_plan_without_kind_still_executes_and_restores(self):
+        before = self.files()
+        operation, operation_id, _ = self.prepare()
+        operation['plan'].pop('kind')
+        operation['digest'] = digest(operation['plan'])
+        (self.service._folder(operation_id) / 'plan.json').write_text(json.dumps(operation['plan']))
+        self.service._save(operation)
+        self.service.execute(operation_id, operation['digest'])
+        self.service.restore(operation_id, operation['digest'])
+        self.assertEqual(before, self.files())
 
     def test_failed_directory_sync_retains_original_at_destination(self):
         op, _, _ = self.prepare()

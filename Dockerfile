@@ -1,6 +1,7 @@
-FROM python:3.13-slim
+FROM python:3.13-slim-trixie
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 MANGA_KIT_DATA_ROOT=/state
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends libarchive13t64 && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 RUN pip install --no-cache-dir . && useradd --uid 10001 --create-home manga && mkdir /state && chown manga:manga /state

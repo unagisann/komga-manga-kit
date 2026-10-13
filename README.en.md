@@ -3,7 +3,7 @@
 A self-hosted foundation for Japanese manga organization and Komga integration.
 The UI uses warm paper tones, a clay accent, responsive cards, and light/dark themes.
 
-**Status: 0.1.0.dev2, the second v0.1 milestone.** This is not a production v0.1 release.
+**Status: 0.1.0.dev3, the third v0.1 milestone.** This is not a production v0.1 release.
 The interface is currently Japanese. This document provides English setup instructions.
 No manga acquisition or download functionality is included.
 
@@ -16,6 +16,7 @@ No manga acquisition or download functionality is included.
 - Organization previews, duplicate-target detection, and existing-file checks
 - Opt-in CLI moves with confirmed plans, full backups, and restore without overwriting existing files
 - Completed-folder organization with verified Komga 1.29.0 reading-progress and locked-metadata preservation
+- CBZ copies from ZIP/CBZ, RAR/CBR, and 7z with normalized page names/order and preserved ComicInfo.xml
 - Background scan/preview jobs with persistent progress, results, and operation history
 - Manual metadata and reading edits with diff review, conflict detection, and reset
 - Komga connection checks and read-only library/series API calls
@@ -24,7 +25,8 @@ No manga acquisition or download functionality is included.
 
 Default settings and the web interface provide organization previews. CLI execution requires `execution.enabled: true`.
 Moves support POSIX, one filesystem, and complete series only. All selected archives and `series.json` are backed up first.
-Komga integration explicitly requests scans; archive conversion and external metadata writes are not implemented.
+Move integration explicitly requests Komga scans. CBZ conversion copies to a separate output root and retains originals.
+Replacing original archives, migrating progress to converted copies, and external metadata writes remain unimplemented.
 Manual edits are stored in application state and used by search, kana filters, and organization previews.
 External metadata enrichment, new-volume checks, automatic completion detection, and portal features are planned.
 Cover artwork currently uses generic visual placeholders rather than extracted archive covers.
@@ -124,6 +126,36 @@ emptying, CBZ conversion, and extension repair. Stale hashes, duplicate content 
 trash entries prevent execution. Book/series IDs and some internal creation timestamps change after moves;
 external tools that retain these IDs are not covered by the tests.
 See the [Japanese organization guide](docs/ORGANIZATION.md) for detailed recovery and opt-in integration testing.
+
+## Generate normalized CBZ copies
+
+Use the same explicitly enabled CLI configuration. Create an output directory that overlaps neither the source library
+nor application state. `--book` selects a source path relative to `library.root`; repeat it to select multiple archives.
+
+```bash
+mkdir -p /path/to/converted-library
+.venv/bin/manga-kit --config /path/to/execute.yaml prepare-conversion \
+  --book 'Series/Book 1.zip' --output /path/to/converted-library
+# Review plan.entries, including each original-page/normalized-page mapping.
+.venv/bin/manga-kit --config /path/to/execute.yaml execute OPERATION_ID --confirm DIGEST
+.venv/bin/manga-kit --config /path/to/execute.yaml restore OPERATION_ID --confirm DIGEST
+```
+
+ZIP/CBZ, RAR/CBR, and 7z are supported. RAR/7z additionally require the libarchive shared library
+(`sudo apt-get install libarchive-dev` on Debian-based hosts); the Docker image includes it.
+EPUB, encrypted or split archives, links, duplicate names, unsafe paths, inconsistent ComicInfo page references,
+and hidden image entries are outside the conversion scope. Limits per archive: 10,000 entries, 256 MiB per file,
+4 GiB expanded data, 256 KiB of ComicInfo.xml, and a 16 MiB ZIP central directory.
+Images sort naturally by their full internal paths and become sequential names such as `0001.png`.
+Images are copied without re-encoding; ComicInfo.xml is moved to the archive root with its bytes intact.
+Other file bytes and ZIP comments are preserved. Empty directory entries and archive entry timestamps are not retained.
+Outputs use ZIP stored entries, so they can be larger than compressed inputs. Staging and backups require additional space.
+
+All outputs are verified before publishing the first CBZ. Existing output files are never overwritten.
+Undo validates every generated file and deletes only unchanged outputs from that operation; originals and later source edits stay intact.
+Conversion never contacts Komga or transfers local manual metadata edits into archives. Existing source-library IDs and progress stay intact.
+Converted copies can be imported separately as new unread books. Replacing managed sources with converted copies and migrating
+their reading state remains a later milestone. See the [Japanese conversion guide](docs/CONVERSION.md).
 
 ## Compatibility and extension
 

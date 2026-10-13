@@ -12,6 +12,7 @@ from .state import StateStore
 from .state import StateConflict
 from .komga import KomgaError
 from .operations import OperationService
+from .conversion import ConversionService
 
 
 def main():
@@ -31,6 +32,9 @@ def main():
     job.add_argument("id")
     prepare = commands.add_parser("prepare", help="整理の実行計画と変更前情報を保存")
     prepare.add_argument("--series", action="append", help="対象の作品ID（複数指定可能）")
+    conversion = commands.add_parser("prepare-conversion", help="元書庫を保持するCBZ生成計画とページ順を確認")
+    conversion.add_argument("--book", action="append", required=True, help="元書庫の相対パス（複数指定可能）")
+    conversion.add_argument("--output", type=Path, required=True, help="別の変換先フォルダ（事前に作成）")
     for name, help_text in [("execute", "確認した整理計画をバックアップ後に実行"),
                             ("restore", "整理操作を上書きせず復元"), ("operation", "保存した整理操作を表示")]:
         command = commands.add_parser(name, help=help_text)
@@ -52,13 +56,17 @@ def main():
             store = StateStore(config)
             store.recover()
             library = LibraryService(config, store=store)
-            if args.command in {"prepare", "execute", "restore", "operation"}:
+            if args.command in {"prepare", "prepare-conversion", "execute", "restore", "operation"}:
                 service = OperationService(config, store)
                 if args.command == "prepare":
                     output = service.prepare(selected=args.series)
+                elif args.command == "prepare-conversion":
+                    output = ConversionService(config, store).prepare(args.book, args.output)
                 elif args.command == "operation":
                     output = service.inspect(args.id)
                 else:
+                    if service.inspect(args.id)["plan"].get("kind") == "conversion":
+                        service = ConversionService(config, store)
                     output = getattr(service, args.command)(args.id, args.confirm)
             elif args.command == "jobs":
                 if not 1 <= args.limit <= 200:

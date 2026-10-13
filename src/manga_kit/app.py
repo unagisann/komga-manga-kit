@@ -56,7 +56,8 @@ def create_app(config_path=None, *, settings=None, features=None):
     def context():
         return {"settings": settings, "features": registry, "version": __version__,
                 "status_labels": {"ongoing": "連載中", "completed": "完結", "unknown": "未分類"},
-                "job_labels": {"scan": "蔵書スキャン", "preview": "整理プレビュー", "organize": "整理の実行", "restore": "整理の復元"},
+                "job_labels": {"scan": "蔵書スキャン", "preview": "整理プレビュー", "organize": "整理の実行", "restore": "整理の復元",
+                               "conversion": "CBZ生成", "conversion_restore": "CBZ生成の取り消し"},
                 "job_status_labels": {"queued": "待機中", "running": "処理中", "succeeded": "完了",
                                       "failed": "失敗", "interrupted": "中断"},
                 "event_labels": {"metadata_edit": "作品情報の編集", "metadata_relocated": "編集情報の引き継ぎ",
