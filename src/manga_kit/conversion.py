@@ -7,6 +7,7 @@ from uuid import uuid4
 from .archives import build_cbz, inspect_archive, name_key
 from .config import ConfigError
 from .filesystem import LibraryFilesystem, file_hash
+from .durability import durable_mkdir, sync_directory, sync_file
 from .operations import OperationService, digest
 from .state import StateConflict, timestamp
 
@@ -48,7 +49,7 @@ class ConversionService(OperationService):
                     "output_root": str(root), "output_identity": destination.identity,
                     "entries": entries, "originals_retained": True}
             operation = {"plan": plan, "digest": digest(plan), "status": "planned", "generated": {}}
-            self._folder(plan["id"]).mkdir(mode=0o700)
+            durable_mkdir(self._folder(plan["id"]))
             self._save(operation)
             return operation
 
@@ -85,7 +86,7 @@ class ConversionService(OperationService):
                 if folder.stat().st_dev == output.identity["device"] and shutil.disk_usage(folder).free < required + expanded * 2 + work + 1024 * 1024:
                     raise ConfigError("共有ディスクのバックアップ・展開・出力の空き容量が不足しています。")
                 backup, stage = folder / "backup", folder / ("cbz-" + uuid4().hex)
-                backup.mkdir(mode=0o700, exist_ok=True)
+                durable_mkdir(backup)
                 if backup.is_symlink():
                     raise ConfigError("バックアップの保存先が不正です。")
                 for index, entry in enumerate(entries):
@@ -95,8 +96,10 @@ class ConversionService(OperationService):
                             raise StateConflict("不完全なバックアップがあります。元書庫から新しい計画を作成してください。")
                     else:
                         fs.backup(entry["source"], path, entry["snapshot"])
+                    sync_file(path)
+                sync_directory(backup)
                 self.forward_check(fs, output, entries)
-                stage.mkdir(mode=0o700)
+                durable_mkdir(stage)
                 job_id = self.store.create_job("conversion")
                 operation.update(status="running", job_id=job_id)
                 self._save(operation)
@@ -117,7 +120,7 @@ class ConversionService(OperationService):
                             def record(value):
                                 operation["generated"][str(index)] = value
                                 self._save(operation)
-                            output.recover_backup(entry["target"], stage / f"{index}.cbz", snapshot, before_publish=record)
+                            self._copy_backup(output, operation, entry["target"], stage / f"{index}.cbz", snapshot, record)
                             self.store.update_job(job_id, current=index + 1)
                     operation["status"] = "completed"
                     self._save(operation)
@@ -148,6 +151,7 @@ class ConversionService(OperationService):
                     expected = operation["generated"].get(str(index))
                     if current is not None and current != expected:
                         raise StateConflict("生成物が変更または差し替えられています。削除せず中止しました。")
+                self._cleanup_temporary(output, operation)
                 job_id = self.store.create_job("conversion_restore")
                 operation.update(status="restoring", restore_job_id=job_id)
                 self._save(operation)

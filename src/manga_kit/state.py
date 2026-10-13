@@ -10,6 +10,7 @@ from threading import Lock
 from uuid import uuid4
 
 from .config import ConfigError
+from .durability import durable_mkdir, sync_directory
 
 
 class StateConflict(RuntimeError):
@@ -46,7 +47,7 @@ class StateStore:
     def connection(self):
         with self._lock:
             if not self._initialized:
-                self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                durable_mkdir(self.path.parent)
                 if self.path.is_symlink():
                     raise ConfigError("実行データのDBにシンボリックリンクは使えません。")
                 conn = sqlite3.connect(self.path, timeout=15)
@@ -55,6 +56,7 @@ class StateStore:
                     if version not in {0, 1, 2}:
                         raise ConfigError("実行データの形式が対応バージョンと異なります。")
                     conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA synchronous=FULL")
                     conn.executescript("""
                         CREATE TABLE IF NOT EXISTS jobs (
                             id TEXT PRIMARY KEY, namespace TEXT NOT NULL, kind TEXT NOT NULL,
@@ -80,10 +82,12 @@ class StateStore:
                 finally:
                     conn.close()
                 self.path.chmod(0o600)
+                sync_directory(self.path.parent)
                 self._initialized = True
         conn = sqlite3.connect(self.path, timeout=15)
         conn.row_factory = sqlite3.Row
         try:
+            conn.execute("PRAGMA synchronous=FULL")
             with conn:
                 yield conn
         finally:
@@ -158,7 +162,7 @@ class StateStore:
             return
         import fcntl
         directory = self.path.parent / "operations" / self.namespace
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        durable_mkdir(directory)
         if not directory.resolve().is_relative_to(self.path.parent.resolve()):
             raise ConfigError("編集のロック保存先が実行データ外を指しています。")
         fd = os.open(directory / "lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)

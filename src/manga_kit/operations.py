@@ -8,11 +8,13 @@ import os
 from pathlib import PurePosixPath
 import re
 import shutil
+import stat
 import unicodedata
 from uuid import uuid4
 
 from .config import ConfigError
 from .filesystem import LibraryFilesystem, file_hash
+from .durability import durable_mkdir, sync_directory, sync_file
 from .komga import KomgaClient, KomgaError
 from .komga_moves import KomgaMoveGuard
 from .library import LibraryService
@@ -44,7 +46,7 @@ class OperationService:
         if os.name != "posix":
             raise ConfigError("整理の実行はPOSIX環境に限ります。")
         import fcntl
-        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        durable_mkdir(self.directory)
         if not self.directory.resolve().is_relative_to(self.settings.data_root.resolve()):
             raise ConfigError("操作履歴の保存先が実行データ外を指しています。")
         fd = os.open(self.directory / "lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -78,10 +80,18 @@ class OperationService:
                 json.dump(operation["plan"], output, ensure_ascii=False, indent=2)
                 output.flush()
                 os.fsync(output.fileno())
+        current = folder / "manifest.json"
+        if current.exists() and not operation.get("_fallback"):
+            # Keep the last committed state reachable even if the new rename
+            # has not reached disk when power is lost.
+            previous = folder / ("manifest-previous-" + uuid4().hex)
+            os.link(current, previous, follow_symlinks=False)
+            os.replace(previous, folder / "manifest.previous.json")
+            sync_directory(folder)
         temporary = folder / ("manifest-" + uuid4().hex)
         with temporary.open("x") as output:
             os.chmod(temporary, 0o600)
-            json.dump({key: value for key, value in operation.items() if key != "plan"}, output, ensure_ascii=False, indent=2)
+            json.dump({key: value for key, value in operation.items() if key not in {"plan", "_fallback"}}, output, ensure_ascii=False, indent=2)
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary, folder / "manifest.json")
@@ -90,10 +100,68 @@ class OperationService:
             os.fsync(fd)
         finally:
             os.close(fd)
+        # The operation directory itself must also survive a reboot.
+        sync_directory(folder.parent)
+        operation.pop("_fallback", None)
+
+    def _copy_backup(self, fs, operation, relative, backup, expected, record):
+        prefix = ".manga-kit-restore-" + operation["plan"]["id"] + "-"
+        def created(path, identity):
+            operation.setdefault("temporary_files", {})[path] = identity
+            self._save(operation)
+        fs.recover_backup(relative, backup, expected, before_publish=record,
+                          on_create=created, temporary_prefix=prefix)
+        self._cleanup_temporary(fs, operation)
+
+    def _cleanup_temporary(self, fs, operation):
+        pending = operation.get("temporary_files", {})
+        field = "target" if self.kind == "conversion" else "source"
+        parents = {PurePosixPath(entry[field]).parent for entry in operation["plan"]["entries"]}
+        prefix = ".manga-kit-restore-" + operation["plan"]["id"] + "-"
+        for path, expected in pending.items():
+            parsed = PurePosixPath(path)
+            if parsed.parent not in parents or not re.fullmatch(re.escape(prefix) + r"[0-9a-f]{32}", parsed.name):
+                raise StateConflict("一時ファイルの記録が操作の対象と一致しません。")
+            with fs.parent(path) as (fd, name):
+                try:
+                    current = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                if (not stat.S_ISREG(current.st_mode)
+                        or (current.st_dev, current.st_ino) != (expected["device"], expected["inode"])):
+                    raise StateConflict("一時ファイルが差し替えられています。削除せず中止しました。")
+        for path in pending:
+            with fs.parent(path) as (fd, name):
+                try:
+                    current = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                    expected = pending[path]
+                    if (current.st_dev, current.st_ino) != (expected["device"], expected["inode"]):
+                        raise StateConflict("一時ファイルが差し替えられています。")
+                    os.unlink(name, dir_fd=fd)
+                except FileNotFoundError:
+                    pass
+                os.fsync(fd)
+        if pending:
+            operation["temporary_files"] = {}
+            self._save(operation)
 
     def inspect(self, operation_id):
         try:
-            operation = json.loads((self._folder(operation_id) / "manifest.json").read_text())
+            folder = self._folder(operation_id)
+            operation = None
+            for filename in ("manifest.json", "manifest.previous.json"):
+                try:
+                    value = json.loads((folder / filename).read_text())
+                    if not isinstance(value, dict):
+                        raise ValueError("Invalid manifest")
+                    operation = value
+                    if filename != "manifest.json":
+                        operation["_fallback"] = True
+                    break
+                except (OSError, ValueError):
+                    continue
+            if operation is None:
+                raise ValueError("No readable manifest")
             if "plan" not in operation:
                 operation["plan"] = json.loads((self._folder(operation_id) / "plan.json").read_text())
         except (OSError, ValueError) as exc:
@@ -168,7 +236,7 @@ class OperationService:
                     "root_identity": fs.identity, "komga_url": self.settings.komga_url, "layout": asdict(rules),
                     "entries": entries, "groups": groups, "edits": expected, "komga": native}
             operation = {"plan": plan, "digest": digest(plan), "status": "planned", "moved_count": 0, "edits_after": None}
-            self._folder(plan["id"]).mkdir(mode=0o700)
+            durable_mkdir(self._folder(plan["id"]))
             self._save(operation)
             return operation
 
@@ -205,7 +273,7 @@ class OperationService:
             required = sum(entry["snapshot"]["size"] for entry in entries)
             if shutil.disk_usage(self.directory).free < required + 1024 * 1024:
                 raise ConfigError("全対象をバックアップするための空き容量がありません。")
-            backup.mkdir(mode=0o700, exist_ok=True)
+            durable_mkdir(backup)
             if backup.is_symlink():
                 raise ConfigError("バックアップの保存先が不正です。")
             for index, entry in enumerate(entries):
@@ -215,6 +283,9 @@ class OperationService:
                         raise StateConflict("不完全なバックアップがあります。元ファイルを確認し、新しい計画を作成してください。")
                 else:
                     fs.backup(entry["source"], target, entry["snapshot"])
+                # Also flush reused backups from older/retried operations.
+                sync_file(target)
+            sync_directory(backup)
             self._forward_check(fs, operation)
             job_id = self.store.create_job("organize")
             operation.update(status="running", job_id=job_id)
@@ -270,6 +341,7 @@ class OperationService:
                     raise StateConflict("バックアップの検証に失敗しました。")
                 locations.append((source, target, backup))
             native = self.guard.restore_snapshot(plan["komga"], plan["entries"])
+            self._cleanup_temporary(fs, operation)
             operation["restore_native"] = native
             job_id = self.store.create_job("restore")
             operation.update(status="restoring", restore_job_id=job_id)
@@ -284,12 +356,12 @@ class OperationService:
                         self._save(operation)
                     if entry["source"] == entry["target"]:
                         if source is None:
-                            fs.recover_backup(entry["source"], backup, entry["snapshot"], before_publish=record_recovery)
+                            self._copy_backup(fs, operation, entry["source"], backup, entry["snapshot"], record_recovery)
                     elif source is None:
                         if target:
                             fs.move(entry["target"], entry["source"], entry["snapshot"])
                         else:
-                            fs.recover_backup(entry["source"], backup, entry["snapshot"], before_publish=record_recovery)
+                            self._copy_backup(fs, operation, entry["source"], backup, entry["snapshot"], record_recovery)
                     elif target:
                         # An interrupted link/unlink step can leave both names of the same inode.
                         with fs.parent(entry["target"]) as (fd, name):

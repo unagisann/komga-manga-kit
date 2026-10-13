@@ -3,12 +3,14 @@ from contextlib import contextmanager
 import hashlib
 import os
 from pathlib import PurePosixPath
+import re
 import stat
 import unicodedata
 from uuid import uuid4
 import xxhash
 
 from .config import ConfigError
+from .durability import sync_directory
 from .state import StateConflict
 
 
@@ -59,6 +61,13 @@ class LibraryFilesystem:
                 if os.fstat(child).st_dev != self.identity["device"]:
                     os.close(child)
                     raise ConfigError("別のファイルシステムへの整理は未対応です。")
+                if create:
+                    try:
+                        os.fsync(child)
+                        os.fsync(fd)
+                    except BaseException:
+                        os.close(child)
+                        raise
                 os.close(fd)
                 fd = child
             yield fd, path.name
@@ -123,9 +132,12 @@ class LibraryFilesystem:
             try:
                 self.verify(target, expected)
                 self.verify(source, expected)
+                with self.open_read(target) as content:
+                    os.fsync(content.fileno())
+                # Persist the new name before removing the old name.
+                os.fsync(dst_fd)
                 os.unlink(src_name, dir_fd=src_fd)
                 os.fsync(src_fd)
-                os.fsync(dst_fd)
             except BaseException:
                 # Delete only the link created by this call, never a substituted file.
                 # After source unlink, the destination is the remaining original.
@@ -135,7 +147,8 @@ class LibraryFilesystem:
                     if all((value.st_dev, value.st_ino) == (expected["device"], expected["inode"])
                            for value in (original, current)):
                         os.unlink(dst_name, dir_fd=dst_fd)
-                except FileNotFoundError:
+                        os.fsync(dst_fd)
+                except OSError:
                     pass
                 raise
 
@@ -155,15 +168,24 @@ class LibraryFilesystem:
         self.verify(relative, expected)
         if file_hash(destination) != expected["sha256"]:
             raise StateConflict("バックアップの内容を検証できませんでした。")
+        sync_directory(destination.parent)
 
-    def recover_backup(self, relative, backup, expected, before_publish=None):
+    def recover_backup(self, relative, backup, expected, before_publish=None, on_create=None, temporary_prefix=".manga-kit-restore-"):
         self.ensure_absent(relative)
         if file_hash(backup) != expected["sha256"]:
             raise StateConflict("バックアップが変更されています。復元を中止しました。")
         with self.parent(relative, create=True) as (parent, name):
-            temporary = ".manga-kit-restore-" + uuid4().hex
+            if not re.fullmatch(r"\.manga-kit-restore-(?:[0-9a-f]{32}-)?", temporary_prefix):
+                raise ConfigError("復元用の一時ファイル名が不正です。")
+            temporary = temporary_prefix + uuid4().hex
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
             try:
+                if on_create is not None:
+                    os.fsync(fd)
+                    os.fsync(parent)
+                    created = os.fstat(fd)
+                    on_create(str(PurePosixPath(relative).parent / temporary),
+                              {"device": created.st_dev, "inode": created.st_ino})
                 copied_hash = hashlib.sha256()
                 with backup.open("rb") as source:
                     while chunk := source.read(1024 * 1024):
@@ -185,3 +207,4 @@ class LibraryFilesystem:
             finally:
                 os.close(fd)
                 os.unlink(temporary, dir_fd=parent)
+                os.fsync(parent)

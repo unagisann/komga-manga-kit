@@ -271,7 +271,12 @@ class OperationTests(unittest.TestCase):
         entry = op['plan']['entries'][0]
         fs = LibraryFilesystem(self.library)
         self.addCleanup(fs.close)
-        with patch('manga_kit.filesystem.os.fsync', side_effect=OSError('sync failed')), self.assertRaises(OSError):
+        original = os.fsync
+        def fail_after_unlink(fd):
+            if not (self.library / entry['source']).exists():
+                raise OSError('source directory sync failed')
+            return original(fd)
+        with patch('manga_kit.filesystem.os.fsync', side_effect=fail_after_unlink), self.assertRaises(OSError):
             fs.move(entry['source'], entry['target'], entry['snapshot'])
         self.assertFalse((self.library / entry['source']).exists())
         fs.verify(entry['target'], entry['snapshot'])

@@ -3,7 +3,7 @@
 A self-hosted foundation for Japanese manga organization and Komga integration.
 The UI uses warm paper tones, a clay accent, responsive cards, and light/dark themes.
 
-**Status: 0.1.0.dev3, the third v0.1 milestone.** This is not a production v0.1 release.
+**Status: 0.1.0.dev4, durability improvements for the third v0.1 milestone.** This is not a production v0.1 release.
 The interface is currently Japanese. This document provides English setup instructions.
 No manga acquisition or download functionality is included.
 
@@ -15,6 +15,7 @@ No manga acquisition or download functionality is included.
 - Configurable status folders, series names, book names, and folder hierarchies
 - Organization previews, duplicate-target detection, and existing-file checks
 - Opt-in CLI moves with confirmed plans, full backups, and restore without overwriting existing files
+- Durable backups and destination names before source removal, previous operation checkpoints, and recovery after process termination
 - Completed-folder organization with verified Komga 1.29.0 reading-progress and locked-metadata preservation
 - CBZ copies from ZIP/CBZ, RAR/CBR, and 7z with normalized page names/order and preserved ComicInfo.xml
 - Background scan/preview jobs with persistent progress, results, and operation history
@@ -25,6 +26,7 @@ No manga acquisition or download functionality is included.
 
 Default settings and the web interface provide organization previews. CLI execution requires `execution.enabled: true`.
 Moves support POSIX, one filesystem, and complete series only. All selected archives and `series.json` are backed up first.
+Persistence ordering and recovery limits are documented in [the durability guide](docs/DURABILITY.md) (Japanese).
 Move integration explicitly requests Komga scans. CBZ conversion copies to a separate output root and retains originals.
 Replacing original archives, migrating progress to converted copies, and external metadata writes remain unimplemented.
 Manual edits are stored in application state and used by search, kana filters, and organization previews.
