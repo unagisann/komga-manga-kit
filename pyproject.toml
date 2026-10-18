@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/*.txt"]
-dependencies = ["Flask>=3.1,<4", "PyYAML>=6,<7", "requests>=2.32.3,<3", "gunicorn>=23,<24", "defusedxml>=0.7,<1", "xxhash>=3.5,<4", "libarchive-c>=5,<6"]
+dependencies = ["Flask>=3.1,<4", "PyYAML>=6,<7", "requests>=2.32.3,<3", "gunicorn>=23,<24", "defusedxml>=0.7,<1", "xxhash>=3.5,<4", "libarchive-c>=5,<6", "Pillow>=12,<13"]
 
 [project.optional-dependencies]
 release = ["build>=1.2,<2"]

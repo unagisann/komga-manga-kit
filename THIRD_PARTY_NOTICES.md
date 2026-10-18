@@ -20,6 +20,7 @@ Names and versions refer to the upstream distributions published at https://pypi
 | [libarchive-c](https://pypi.org/project/libarchive-c/5.3/#files) | 5.3 | CC0-1.0 | [LICENSE.md](licenses/libarchive-c-5.3-LICENSE.md.txt) |
 | [MarkupSafe](https://pypi.org/project/markupsafe/3.0.4/#files) | 3.0.4 | BSD-3-Clause | [LICENSE.txt](licenses/markupsafe-3.0.4-LICENSE.txt) |
 | [packaging](https://pypi.org/project/packaging/26.3/#files) | 26.3 | Apache-2.0 OR BSD-2-Clause | [LICENSE](licenses/packaging-26.3-LICENSE.txt), [LICENSE.APACHE](licenses/packaging-26.3-LICENSE.APACHE.txt), [LICENSE.BSD](licenses/packaging-26.3-LICENSE.BSD.txt) |
+| [pillow](https://pypi.org/project/pillow/12.3.0/#files) | 12.3.0 | MIT-CMU | [LICENSE](licenses/pillow-12.3.0-LICENSE.txt) |
 | [PyYAML](https://pypi.org/project/pyyaml/6.0.3/#files) | 6.0.3 | MIT | [LICENSE](licenses/pyyaml-6.0.3-LICENSE.txt) |
 | [requests](https://pypi.org/project/requests/2.34.2/#files) | 2.34.2 | Apache-2.0 | [LICENSE](licenses/requests-2.34.2-LICENSE.txt), [NOTICE](licenses/requests-2.34.2-NOTICE.txt) |
 | [urllib3](https://pypi.org/project/urllib3/2.8.0/#files) | 2.8.0 | MIT | [LICENSE.txt](licenses/urllib3-2.8.0-LICENSE.txt) |
@@ -33,6 +34,8 @@ Additional complete license texts, supplementing upstream packages that supply a
 - [CC0 1.0 Universal](licenses/CC0-1.0.txt), from https://creativecommons.org/publicdomain/zero/1.0/legalcode.txt, for libarchive-c.
 - [xxHash C library BSD license](licenses/xxhash-library-LICENSE.txt), from `deps/xxhash/LICENSE` in the xxhash source distribution.
   This supplements the Python binding's own license notice.
+- Pillow's binary wheels bundle image libraries such as libjpeg-turbo, zlib, libpng and libwebp.
+  Their licenses are part of the Pillow license file listed above.
 
 `libarchive-c` uses the system libarchive shared library. The Docker image installs the Debian libarchive package
 and retains its license information under `/usr/share/doc/libarchive13t64/copyright`, together with the license

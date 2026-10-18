@@ -71,6 +71,8 @@ Additional complete license texts, supplementing upstream packages that supply a
 - [CC0 1.0 Universal](licenses/CC0-1.0.txt), from https://creativecommons.org/publicdomain/zero/1.0/legalcode.txt, for libarchive-c.
 - [xxHash C library BSD license](licenses/xxhash-library-LICENSE.txt), from `deps/xxhash/LICENSE` in the xxhash source distribution.
   This supplements the Python binding's own license notice.
+- Pillow's binary wheels bundle image libraries such as libjpeg-turbo, zlib, libpng and libwebp.
+  Their licenses are part of the Pillow license file listed above.
 
 `libarchive-c` uses the system libarchive shared library. The Docker image installs the Debian libarchive package
 and retains its license information under `/usr/share/doc/libarchive13t64/copyright`, together with the license
