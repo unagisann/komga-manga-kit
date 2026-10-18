@@ -1,0 +1,16 @@
+include LICENSE README.md README.en.md THIRD_PARTY_NOTICES.md requirements.lock
+include pyproject.toml MANIFEST.in config.example.yaml compose.yaml Dockerfile .dockerignore .gitignore
+include .env.example compose.local.example.yaml
+recursive-include src *.py *.html *.css *.js *.svg
+recursive-include docs *.md
+recursive-include tests *.py
+recursive-include scripts *.py
+recursive-include licenses *.txt
+include .github/workflows/tests.yaml
+prune .venv
+prune .git
+prune var
+prune library
+prune build
+prune dist
+global-exclude __pycache__ *.py[cod] *.sqlite* *.db *.cbz *.cbr *.rar *.7z *.zip *.epub .env config.yaml compose.local.yaml
