@@ -1,0 +1,92 @@
+{% extends 'base.html' %}{% import 'components.html' as ui %}
+{% block title %}漫画を発見{% endblock %}
+{% block scripts %}
+<link rel="stylesheet" href="{{ asset_url('discovery.css') }}">
+<script src="{{ asset_url('tools.js') }}" defer></script>
+<script src="{{ asset_url('discovery.js') }}" defer></script>
+{% endblock %}
+
+{% macro card(item, number=0, show_source=false) -%}
+{% set src = cover_url(item.book) or item.image %}
+<article class="cover-card discovery-card{{ ' is-owned' if item.owned else '' }}" data-owned="{{ '1' if item.owned else '0' }}" data-search="{{ item.title }} {{ item.author or '' }} {{ item.teaser or '' }}">
+  <div class="thumb">
+    {{ ui.cover(item, number) }}
+    {% if src %}<img src="{{ src }}" data-cover-fallback="{{ item.image if item.image != src else '' }}" alt="{{ item.title }}の表紙" loading="lazy" decoding="async" referrerpolicy="no-referrer">{% endif %}
+    <span class="discovery-badge{{ ' owned' if item.owned else '' }}">{{ '蔵書あり' if item.owned else '要確認' if item.state == 'review' else '未所持' }}</span>
+  </div>
+  <div class="discovery-card-copy">
+    <h3 class="cap">{{ item.title }}</h3>
+    {% if item.author %}<p class="sub">{{ item.author }}</p>{% endif %}
+    {% if item.teaser %}<p class="discovery-teaser">{{ item.teaser }}</p>{% endif %}
+    {% if show_source %}<p class="discovery-source">{{ item.article_title }}</p>{% elif item.total_volumes %}<p class="discovery-source">記事掲載：全{{ item.total_volumes }}巻</p>{% endif %}
+    <div class="acts">
+      {% if item.read_url %}<a class="read" href="{{ item.read_url }}">Komgaで読む</a>{% elif item.owned %}<a class="discovery-link" href="{{ url_for('tools.series', series_id=item.series_id) }}">作品をひらく {{ ui.icon('arrow', 12) }}</a>{% endif %}
+      {% if item.url %}<a class="discovery-link" href="{{ item.url }}" target="_blank" rel="noopener noreferrer">紹介記事 ↗</a>{% endif %}
+      {% if item.product_url %}<a class="discovery-link" href="{{ item.product_url }}" target="_blank" rel="noopener noreferrer">作品情報 ↗</a>{% endif %}
+    </div>
+    <details class="discovery-match"><summary>所持判定を修正</summary>
+      <form class="tool-match" data-source="{{ source_key }}" data-entry="{{ item.id }}">
+        <label>蔵書を検索<input type="search" data-owned-search maxlength="200" placeholder="作品名・著者"></label>
+        <label>対応する作品<select name="series_id"><option value="">未所持</option>{% if item.owned %}<option value="{{ item.series_id }}" selected>{{ item.matched_title }}</option>{% endif %}</select></label>
+        <button class="button" type="submit">対応を保存</button>
+      </form>
+    </details>
+  </div>
+</article>
+{%- endmacro %}
+
+{% block content %}
+<div class="discovery-header">
+  <div><h1>{{ ui.icon('compass', 25) }}漫画を発見</h1><p>テーマ別の紹介から、次に読みたい漫画を探せます。表紙と紹介を見比べて、蔵書にある作品はKomgaで開けます。</p></div>
+  <button class="button" type="button" data-tool-action="{{ url_for('tools.refresh_discovery') }}"{% if not settings.demo and not settings.tools.discovery_enabled %} disabled{% endif %}>{{ ui.icon('refresh', 15) }}記事と蔵書を更新</button>
+</div>
+<div id="tool-status" role="status" aria-live="polite" class="notice section" hidden></div>
+{% if not settings.demo and not settings.tools.discovery_enabled %}<p class="discovery-notice">発見の情報取得は無効です。<a href="{{ url_for('maintenance.settings') }}">接続・情報源</a>で有効にすると更新できます。</p>{% endif %}
+
+{% if data and view.entries %}
+<div class="discovery-meta">
+  <span>紹介作品 <strong>{{ view.entries|length }}</strong>冊</span><span>蔵書あり <strong>{{ view.owned_count }}</strong>冊</span>
+  {% if data.updated %}<span>取得 <time class="local-time" datetime="{{ data.updated }}">{{ data.updated }}</time></span>{% endif %}
+  <span>出典：<a href="https://booklive.jp/bkmr" target="_blank" rel="noopener noreferrer">ぶくまる ↗</a></span>
+  {% if data.demo %}<span>架空の作品・紹介です</span>{% endif %}
+</div>
+<section class="discovery-block" aria-labelledby="discovery-daily-title">
+  <div class="discovery-block-head"><div>
+    <p class="eyebrow">TODAY'S PICKS · {{ view.today.strftime('%Y.%m.%d') }}</p>
+    <h2 id="discovery-daily-title">今日のおすすめ <span class="discovery-count">{{ view.daily|length }}冊</span></h2>
+    <p>蔵書から{{ view.daily_owned }}冊、まだ持っていない作品から{{ view.daily|length - view.daily_owned }}冊。毎日入れ替わります。</p>
+  </div></div>
+  <div class="cover-grid discovery-grid">{% for item in view.daily %}{{ card(item, loop.index0, show_source=true) }}{% endfor %}</div>
+</section>
+
+<div class="discovery-tools" aria-label="作品の絞り込み">
+  <div class="discovery-filters" role="group" aria-label="所持状況">
+    {% for value, label in [('all', 'すべて'), ('owned', '蔵書あり'), ('missing', '未所持')] %}<button class="lib-chip{{ ' active' if loop.first else '' }}" type="button" data-discovery-filter="{{ value }}" aria-pressed="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>{% endfor %}
+  </div>
+  <input id="discovery-search" type="search" placeholder="作品名・著者で絞り込み" aria-label="作品名・著者で絞り込み" maxlength="200">
+</div>
+<p id="discovery-filter-status" class="discovery-filter-status" role="status" aria-live="polite" hidden></p>
+
+{% for key, eyebrow, heading, description, select_label in [
+  ('themes', 'CURATED THEMES', 'テーマから探す', '好きな作品や気になるテーマを手がかりに、次の一冊を見つけられます。', 'テーマを選ぶ'),
+  ('completed', 'RECENTLY COMPLETED', '最近完結した漫画', 'ぶくまるの完結作品特集から紹介。巻数は記事に掲載された情報です。', '特集を選ぶ')
+] %}
+{% set articles = view.groups[key] %}
+<section class="discovery-block discovery-shelf" id="discovery-{{ key }}" aria-labelledby="discovery-{{ key }}-title">
+  <div class="discovery-block-head">
+    <div><p class="eyebrow">{{ eyebrow }}</p><h2 id="discovery-{{ key }}-title">{{ heading }}</h2><p>{{ description }}</p></div>
+    {% if articles %}<label class="discovery-select-label">{{ select_label }}<select class="discovery-select" data-discovery-shelf="discovery-{{ key }}">{% for article in articles %}<option value="{{ article.id }}">{{ article.title }}</option>{% endfor %}</select></label>{% endif %}
+  </div>
+  {% for article in articles %}
+  <div class="discovery-article" data-article="{{ article.id }}"{% if not loop.first %} hidden{% endif %}>
+    <div class="discovery-article-line"><span>{% if article.published %}{{ article.published }} · {% endif %}{{ article.entries|length }}作品</span>{% if article.url %}<a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">元の記事を読む ↗</a>{% endif %}</div>
+    <div class="cover-grid discovery-grid">{% for item in article.entries %}{{ card(item, loop.index0) }}{% endfor %}</div>
+    <p class="discovery-no-results" hidden>この条件に合う作品はありません。</p>
+  </div>
+  {% else %}<p class="discovery-no-results">この特集の紹介作品はまだありません。「記事と蔵書を更新」で最新の記事を確認できます。</p>{% endfor %}
+</section>
+{% endfor %}
+{% else %}
+<div class="empty-state discovery-empty"><h2>紹介作品をまだ取得していません</h2><p>情報源を有効にして「記事と蔵書を更新」を押すと、テーマ別の紹介と完結作品が表示されます。</p><a class="button" href="{{ url_for('maintenance.settings') }}">接続・情報源を確認</a></div>
+{% endif %}
+{% endblock %}

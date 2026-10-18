@@ -5,10 +5,11 @@ from zoneinfo import ZoneInfo
 from flask import Blueprint, Response, current_app, jsonify, render_template, request, url_for
 
 from .config import ConfigError
+from .discovery import discovery_view
 from .feeds import CATEGORIES, DISCOVERY_FEEDS, season
 from .japanese import search_key
 from .komga import KomgaError
-from .web import body_with_keys, paginate, require_admin_access
+from .web import body_with_keys, book_cover, paginate, require_admin_access
 
 tools = Blueprint("tools", __name__)
 
@@ -40,8 +41,19 @@ def discovery():
     source = request.args.get("source", "curated")
     if source not in {*DISCOVERY_FEEDS, "rakuten"}:
         raise ConfigError("発見の情報源を選んでください。")
+    if source == "curated":
+        data = service("feeds").read(source)
+        return render_template("discovery.html", data=data, view=discovery_view(data, service("inventory")),
+                               cover_url=book_cover, source_key="feed:curated")
     return render_template("tools_feed.html", title="漫画を見つける", kind=source, source_key="feed:" + source,
                            data=service("feeds").read(source), year=None, category=None)
+
+
+@tools.post("/api/tools/discovery/refresh")
+def refresh_discovery():
+    require_admin_access()
+    body_with_keys(set())
+    return job_response(service("feeds").submit_discovery())
 
 
 @tools.get("/tsugimanga")

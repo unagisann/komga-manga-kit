@@ -10,6 +10,7 @@ from defusedxml.ElementTree import fromstring
 
 from .catalogs import CatalogError
 from .config import ConfigError
+from .discovery import article_date, article_kind
 from .sources import PublicHTTP, plain_text, safe_url
 from .state import timestamp
 
@@ -68,15 +69,18 @@ class Introductions(HTMLParser):
 
     def finish(self):
         if self.active and self.active.get("product_url"):
-            title = plain_text(re.sub(r"\s+全[0-9０-９]+巻\s*$", "", "".join(self.active["heading"])), 160)
+            heading = plain_text("".join(self.active["heading"]), 200)
+            volumes = re.search(r"\s+全([0-9０-９]+)巻\s*$", heading)
+            title = re.sub(r"\s+全[0-9０-９]+巻\s*$", "", heading)[:160]
             if title:
                 lines = [plain_text(line, 500) for line in "".join(self.active["text"]).splitlines()]
                 author = next((match[1].strip() for line in lines if (match := re.fullmatch(r"著者[：:]\s*(.{1,80})", line))), "")
-                teasers = [line for line in lines if len(line) >= 30 and not re.search(r"著者[：:]|試し読み|こちら|立ち読み|購入|配信中", line)]
+                teasers = [line for line in lines if len(line) >= 8 and not re.search(r"著者[：:]|試し読み|こちら|立ち読み|購入|配信中|表紙画像", line)]
                 self.items.append({"id": hashlib.sha256((self.url + title).encode()).hexdigest()[:20],
                                    "title": title, "author": author,
                                    "url": self.url, "product_url": self.active["product_url"],
-                                   "image": self.active.get("image", ""), "teaser": " ".join(teasers)[:110]})
+                                   "image": self.active.get("image", ""), "teaser": next(iter(teasers), "")[:110],
+                                   "total_volumes": volumes[1] if volumes else ""})
 
     def handle_starttag(self, tag, attrs):
         if tag in {"script", "style"}:
@@ -115,7 +119,14 @@ def parse_curated(content):
         parser = Introductions(url)
         parser.feed(body[:200000]); parser.finish()
         if len(parser.items) >= 3:
-            result.extend(parser.items)
+            title = re.split(r"[｜|]", plain_text(entry.findtext("{*}title"), 200))[0].strip()
+            metadata = {"article_title": title, "article_kind": article_kind(title, url),
+                        "published": article_date(entry.findtext("{*}pubDate") or entry.findtext("{*}published"))}
+            result.extend({**item, **metadata} for item in parser.items)
+    # Theme recommendations and completion features form the discovery shelves.
+    # Older feeds without those features still retain their introduction articles.
+    selected = [item for item in result if item["article_kind"]]
+    result = selected or result
     unique = {item["id"]: item for item in result}
     if not unique:
         raise CatalogError("作品紹介記事を確認できませんでした。前回の結果は保持しています。")
@@ -178,6 +189,16 @@ class FeedsService:
     def submit(self, kind, year=None, category=None):
         self.key(kind, year, category)
         return self.jobs.submit_task("source_refresh", lambda progress: self.refresh(kind, year, category, progress))
+
+    def submit_discovery(self):
+        if not self.settings.demo and not self.settings.tools.discovery_enabled:
+            raise ConfigError("発見の情報源を設定で有効にしてから更新してください。")
+
+        def update(progress):
+            self.inventory.refresh()
+            return self.refresh("curated", progress=progress)
+
+        return self.jobs.submit_task("source_refresh", update)
 
     def refresh(self, kind, year=None, category=None, progress=lambda *_: None):
         key = self.key(kind, year, category)
@@ -264,5 +285,21 @@ class FeedsService:
         entries = [{"id": f"demo-{kind}-{index}", "title": row["title"], "author": row["author"],
                     "url": "", "rank": index + 1, "original_titles": [row["title"]], "has_manga": True,
                     "teaser": "架空の紹介記事です。", "continuing": index == 4} for index, row in enumerate(rows)]
+        if kind == "curated":
+            entries = []
+            for number, (title, group, published) in enumerate([
+                ("静かな物語が好きな人へ", "themes", "2026-10-13"),
+                ("冒険の続きが気になる漫画", "themes", "2026-10-06"),
+                ("2026年9月に完結した漫画", "completed", "2026-10-02"),
+                ("2026年8月に完結した漫画", "completed", "2026-09-02"),
+            ]):
+                for index in range(6):
+                    row = rows[(number + index) % len(rows)] if rows else {"title": "架空の漫画", "author": "架空の作者"}
+                    entries.append({"id": f"demo-curated-{number}-{index}",
+                                    "title": row["title"] if index < 3 else ["星をめぐる旅", "雨の日の約束", "森の図書室"][index - 3],
+                                    "author": row["author"] if index < 3 else "サンプル作者",
+                                    "url": "", "image": "", "article_title": title, "article_kind": group,
+                                    "published": published, "total_volumes": str(index + 3) if group == "completed" else "",
+                                    "teaser": "人との出会いと小さな変化を描く、架空の紹介作品です。"})
         return {"kind": kind, "entries": entries, "updated": None, "demo": True, **season(), "year": year or season()["year"],
                 "category": category, "category_label": CATEGORIES.get(category, "")}
