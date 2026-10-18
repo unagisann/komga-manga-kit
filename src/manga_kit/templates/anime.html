@@ -1,0 +1,51 @@
+{% extends 'base.html' %}{% import 'components.html' as ui %}
+{% block title %}今期のアニメ{% endblock %}
+{% block scripts %}<link rel="stylesheet" href="{{ asset_url('feeds.css') }}"><script src="{{ asset_url('tools.js') }}" defer></script><script src="{{ asset_url('cover_filter.js') }}" defer></script>{% endblock %}
+{#- 既存Toolsの「今期のアニメ」と同じ構成。所持・漫画版・継続での絞り込みは cover_filter.js が画面内で行う。 -#}
+{% block content %}
+<div class="tool-head">
+  <h1 class="tool-title">{{ ui.icon('tv', 25) }}今期のアニメ{% if data %}<span class="tool-title-meta">{{ data.label }}</span>{% endif %}{% if data and data.stale %}<span class="chip unknown">季節が変わりました</span>{% endif %}</h1>
+  <button class="button" type="button" data-tool-action="/api/tools/feeds/anime/refresh">{{ ui.icon('refresh', 16) }}更新</button>
+</div>
+<div class="tool-lead">
+  {% if data %}
+  {{ counts.all }}作品 ／ ライブラリに原作あり <strong>{{ counts.owned }}</strong>作品
+  ｜ 取得 {% if data.updated %}<time class="local-time" datetime="{{ data.updated }}">{{ data.updated }}</time>{% else %}—{% endif %}
+  ｜ データ: AniList{% if data.demo %} ｜ 架空の情報です{% endif %}
+  {% if data.stale %}<p class="notice warning feed-note">表示中は <strong>{{ data.label }}</strong> のデータです。今は <strong>{{ current.label }}</strong> なので、［更新］を押すと今期の作品に入れ替わります。</p>{% endif %}
+  {% else %}未取得です。［更新］を押すと今期の放送作品を取得します。{% endif %}
+</div>
+<p id="tool-status" class="notice" role="status" hidden></p>
+
+{% if data %}
+{% set first = 'owned' if counts.owned else 'all' %}
+<div class="tool-filters" data-cover-filter="#anime-grid" role="group" aria-label="作品の絞り込み">
+  <div class="tool-row">
+    {% for value, label, icon in [('owned', '持ってる', 'book'), ('manga', '漫画版あり', 'book'), ('all', 'すべて', ''), ('continuing', '継続中', 'refresh')] %}<button class="filter-chip{{ ' active' if value == first else '' }}" type="button" data-filter="{{ value }}" aria-pressed="{{ 'true' if value == first else 'false' }}">{% if icon %}{{ ui.icon(icon, 14) }}{% endif %}{{ label }} <span class="count">{{ counts[value] }}</span></button>{% endfor %}
+    <input class="feed-search" type="search" data-filter-search placeholder="タイトルで絞り込み..." aria-label="タイトルで絞り込み">
+  </div>
+</div>
+{% if data.truncated %}<p class="notice warning">取得上限に達したため、一部の作品です。</p>{% endif %}
+<section class="tool-panel" aria-label="今期のアニメ">
+  <div class="cover-grid" id="anime-grid">
+    {% for item in data.entries %}
+    <article class="cover-card feed-card{{ ' is-owned' if item.owned else '' }}" data-flags="{{ ['owned' if item.owned else '', 'manga' if item.has_manga else '', 'continuing' if item.continuing else '']|select|join(' ') }}" data-search="{{ ([item.title, item.romaji or '', item.matched_title or ''] + (item.original_titles or []))|join(' ') }}">
+      <div class="thumb">{% if item.image %}<img src="{{ item.image }}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">{% else %}{{ ui.cover(item, loop.index0) }}{% endif %}{% if item.owned %}<span class="cover-badge">原作あり</span>{% endif %}</div>
+      <h2 class="cap">{{ item.title }}</h2>
+      <p class="sub">{% if item.continuing %}<span class="chip ongoing">継続</span> {% endif %}{{ (item.studios or [])|join(' / ') }}{% if item.episodes %} ・全{{ item.episodes }}話{% endif %}</p>
+      {% if item.owned and item.matched_title and item.matched_title != item.title %}<p class="sub">原作: {{ item.matched_title }}</p>{% endif %}
+      <div class="acts">
+        {{ ui.owned_action(item, links) }}
+        {% if item.url %}<a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">AniList</a>{% endif %}
+        {% if not item.owned %}<a href="https://search.rakuten.co.jp/search/mall/{{ (item.original_titles[0] if item.original_titles else item.title)|urlencode }}/" target="_blank" rel="noopener noreferrer">楽天で探す</a>{% endif %}
+      </div>
+      {{ ui.match_editor(item, source_key) }}
+    </article>
+    {% endfor %}
+  </div>
+  <p class="tool-empty" data-filter-empty hidden>該当なし</p>
+</section>
+{% else %}
+<section class="tool-panel"><div class="tool-empty"><p>まだ取得していません。［更新］を押すと、AniListから今期の放送作品を取得し、<br>自分のライブラリと突き合わせて「原作を持っている作品」を表示します。</p><a class="button" href="{{ url_for('settings.index', _anchor='sources') }}">情報源を確認</a></div></section>
+{% endif %}
+{% endblock %}

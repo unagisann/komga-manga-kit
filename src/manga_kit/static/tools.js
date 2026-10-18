@@ -21,6 +21,7 @@
     location.reload();
   };
   document.querySelectorAll('[data-tool-action]').forEach(button => button.addEventListener('click', async () => {
+    if (button.dataset.confirm && !confirm(button.dataset.confirm)) return;
     button.disabled = true;
     try {
       const data = await post(button.dataset.toolAction, JSON.parse(button.dataset.payload || '{}'));

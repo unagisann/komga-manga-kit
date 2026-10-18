@@ -1,11 +1,11 @@
 {% import 'components.html' as ui %}
-<p class="lib-meta">{{ matched }} 件中 {{ shown }} 件を表示</p>
+<p class="tool-meta">{{ matched }} 件中 {{ shown }} 件を表示</p>
 {% if cards %}<div class="cover-grid">
   {% for card in cards %}{% set series = card.series %}
   <article class="cover-card"{% if card.tooltip %} title="{{ card.tooltip }}"{% endif %}>
     {% if card.detail %}<a class="thumb" href="{{ url_for('tools.series', series_id=series.id) }}" tabindex="-1" aria-hidden="true">{% else %}<div class="thumb">{% endif %}
       {% if card.cover %}<img src="{{ card.cover }}" alt="" loading="lazy" decoding="async">{% else %}{{ ui.cover(series, loop.index0) }}{% endif %}
-      {% if card.demographic %}<span class="lib-badge">{{ card.demographic }}</span>{% endif %}
+      {% if card.demographic %}<span class="cover-badge">{{ card.demographic }}</span>{% endif %}
     {% if card.detail %}</a>{% else %}</div>{% endif %}
     <h2 class="cap">{% if card.detail %}<a href="{{ url_for('tools.series', series_id=series.id) }}">{{ series.title }}</a>{% else %}{{ series.title }}{% endif %}</h2>
     <p class="sub">{{ [card.authors|join('・'), series.publisher, (card.decade ~ '年代') if card.decade else '']|select|join(' · ') }}{% if series.books %} · 全{{ series.books|length }}冊{% endif %}</p>
@@ -13,6 +13,6 @@
     {% if card.read %}<div class="acts"><a class="read" href="{{ card.read }}">読む</a></div>{% endif %}
   </article>{% endfor %}
 </div>
-{% elif facets.total %}<p class="lib-empty">条件に合う作品がありません。</p>
-{% else %}<div class="lib-empty"><p>蔵書がまだありません。</p><a class="button" href="{{ url_for('settings.index') }}">ライブラリの保存先を設定</a></div>{% endif %}
-{% if more %}<div class="lib-more"><a class="button" href="{{ more.href }}" data-more="{{ more.page }}">もっと見る</a></div>{% endif %}
+{% elif facets.total %}<p class="tool-empty">条件に合う作品がありません。</p>
+{% else %}<div class="tool-empty"><p>蔵書がまだありません。</p><a class="button" href="{{ url_for('settings.index') }}">ライブラリの保存先を設定</a></div>{% endif %}
+{% if more %}<div class="tool-more"><a class="button" href="{{ more.href }}" data-more="{{ more.page }}">もっと見る</a></div>{% endif %}

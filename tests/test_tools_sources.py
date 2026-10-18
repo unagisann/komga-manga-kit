@@ -1,6 +1,6 @@
 from copy import deepcopy
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -10,11 +10,12 @@ import time
 import unittest
 from unittest.mock import patch
 import zipfile
+from zoneinfo import ZoneInfo
 
 from manga_kit import create_app
 from manga_kit.config import ConfigError, Settings, ToolsSettings, load_settings
 from manga_kit.credentials import save_credentials, secret
-from manga_kit.feeds import parse_curated, parse_ranking, parse_rss, season
+from manga_kit.feeds import parse_curated, parse_ranking, parse_rss, ranking_page, season
 from manga_kit.kobo import Kobo
 from manga_kit.new_volumes import analyze_candidates, release_date
 from manga_kit.state import StateConflict, StateStore
@@ -140,6 +141,75 @@ class ToolsTests(unittest.TestCase):
         entries = parse_ranking(('<script id="__NEXT_DATA__" type="application/json">'+json.dumps(data)+'</script>').encode())
         self.assertEqual(entries[0]['title'], '架空作品')
         self.assertEqual(season(date(2026, 1, 1))['season'], 'WINTER')
+
+    def test_ranking_parser_keeps_nominees_points_allowed_store_links_and_totals(self):
+        data = {'props': {'pageProps': {'data': {'details': {'entryCount': 50, 'voteCount': 123456}, 'entries': [
+            {'id': 2, 'title': 'ノミネート作品', 'author': '作者B'},
+            {'id': 1, 'title': '一位作品', 'rank': 1, 'point': 9876, 'author': '作者A',
+             'store': {'bookwalker': 'https://bookwalker.jp/x', 'nicomanga': 'https://evil.example/x', 'other': 'https://bookwalker.jp/y'}}]}}}}
+        page = ranking_page(('<script id="__NEXT_DATA__" type="application/json">'+json.dumps(data)+'</script>').encode())
+        self.assertEqual([entry['title'] for entry in page['entries']], ['一位作品', 'ノミネート作品'])
+        self.assertIsNone(page['entries'][1]['rank'])
+        self.assertEqual(page['entries'][0]['point'], 9876)
+        self.assertEqual(page['entries'][0]['stores'], [{'label': 'BOOK☆WALKER', 'url': 'https://bookwalker.jp/x'}])
+        self.assertEqual(page['details'], {'entries': 50, 'votes': 123456})
+
+    def test_ranking_pages_list_years_and_split_ranked_works_from_nominees(self):
+        index = self.client.get('/tsugimanga').get_data(as_text=True)
+        self.assertIn('歴代ランキング', index)
+        self.assertIn('href="/tsugimanga/%d/comics"' % season()['year'], index)
+        self.assertIn('取得済', index)
+        moved = self.client.get('/tsugimanga?year=2025&category=web')
+        self.assertEqual((moved.status_code, moved.headers['Location']), (302, '/tsugimanga/2025/web'))
+        html = self.client.get('/tsugimanga/2025/comics').get_data(as_text=True)
+        for text in ('ランキング（5作品）', 'ノミネート（3作品）', 'class="rank-badge">1<', '総投票 12,345 票', '5,000pt',
+                     'href="/tsugimanga/2025/web"', 'href="/tsugimanga" class="active"'):
+            self.assertIn(text, html)
+        self.assertEqual(self.client.get('/tsugimanga/2025/unknown').status_code, 400)
+
+    def test_anime_page_filters_by_ownership_and_shows_studios_and_store_search(self):
+        html = self.client.get('/anime').get_data(as_text=True)
+        for text in ('data-cover-filter="#anime-grid"', '持ってる <span class="count">5</span>', 'すべて <span class="count">8</span>',
+                     '継続中 <span class="count">2</span>', '架空スタジオ ・全12話', '原作あり', 'data-flags="owned manga"', '楽天で探す'):
+            self.assertIn(text, html)
+        self.assertEqual(html.count('class="cover-card feed-card'), 8)
+
+    def test_new_volume_page_groups_rows_like_the_existing_tools(self):
+        today = datetime.now(ZoneInfo('Asia/Tokyo')).date()
+        def row(identifier, title, local, latest, *, new=False, paper=None, digital=None, upcoming=(), errors=(), stale=False):
+            sources = {}
+            for name, value in (('paper', paper), ('digital', digital)):
+                if value or (name == 'paper' and upcoming):
+                    sources[name] = {'latest': value, 'upcoming': list(upcoming) if name == 'paper' else [], 'review': [], 'incomplete': False}
+            return {'series_id': identifier, 'title': title, 'local_max': local, 'latest': latest, 'new': new, 'sources': sources,
+                    'errors': list(errors), 'stale': stale, 'updated': '2026-10-18T00:00:00+00:00'}
+        recent = (today - timedelta(days=3)).isoformat()
+        rows = [row('a', '新刊の作品', '3', '5', new=True, paper={'volume': '4', 'date': recent, 'url': 'https://books.rakuten.co.jp/rb/1/'},
+                    digital={'volume': '5', 'date': '2020-01-01', 'url': ''}),
+                row('b', '予約の作品', '5', '5', paper={'volume': '5', 'date': '2020-01-01', 'url': ''}, upcoming=[{'volume': '6', 'date': '2099-02-01', 'url': ''}]),
+                row('c', '最新の作品', '5', '5', paper={'volume': '5', 'date': '2020-01-01', 'url': ''}),
+                row('d', '<b>不明の作品</b>', '2', None),
+                row('e', '失敗の作品', '2', None, errors=['取得に失敗']),
+                row('f', '前回値の作品', '3', '3', paper={'volume': '3', 'date': '2020-01-01', 'url': ''}, errors=['利用制限'], stale=True)]
+        for value in rows:
+            self.store.cache('newvol:row:' + value['series_id'], value)
+        html = self.client.get('/new_volumes').get_data(as_text=True)
+        def section(name):
+            return html.split('id="sec-' + name + '"')[1].split('</details>')[0]
+        expected = {'new': ['新刊の作品'], 'preorder': ['予約の作品'], 'current': ['最新の作品', '前回値の作品'],
+                    'review': ['&lt;b&gt;不明の作品&lt;/b&gt;'], 'errors': ['失敗の作品'], 'stale': ['前回値の作品']}
+        for name, titles in expected.items():
+            with self.subTest(section=name):
+                for value in rows:
+                    escaped = value['title'].replace('<', '&lt;').replace('>', '&gt;')
+                    (self.assertIn if escaped in titles else self.assertNotIn)(escaped, section(name))
+        self.assertIn('id="sec-new" open', html)
+        self.assertNotIn('id="sec-current" open', html)
+        self.assertIn('紙4/電子5 <span class="tag tag-digital">電子先行</span>', section('new'))
+        self.assertIn('+2', section('new'))
+        self.assertIn('href="https://books.rakuten.co.jp/rb/1/"', section('new'))
+        self.assertIn('直近14日に発売された新刊: 1件', html)
+        self.assertNotIn('<b>不明の作品</b>', html)
 
     def test_release_checks_reject_related_editions_and_uncertain_dates(self):
         row = {'title': '架空の作品', 'author': '架空作者', 'aliases': []}

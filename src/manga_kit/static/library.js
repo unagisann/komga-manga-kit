@@ -32,11 +32,11 @@
     }
   };
   form.addEventListener('click', (event) => {
-    const chip = event.target.closest('.lib-chip[data-f]');
+    const chip = event.target.closest('.filter-chip[data-f]');
     if (!chip || modified(event)) return;
     event.preventDefault();
     form.elements[chip.dataset.f].value = chip.dataset.v;
-    form.querySelectorAll(`.lib-chip[data-f="${chip.dataset.f}"]`).forEach((other) => {
+    form.querySelectorAll(`.filter-chip[data-f="${chip.dataset.f}"]`).forEach((other) => {
       other.classList.toggle('active', other === chip);
       if (other === chip) other.setAttribute('aria-current', 'true'); else other.removeAttribute('aria-current');
     });

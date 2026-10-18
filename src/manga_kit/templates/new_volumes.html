@@ -1,11 +1,75 @@
 {% extends 'base.html' %}{% import 'components.html' as ui %}
 {% block title %}新刊チェック{% endblock %}
-{% block scripts %}<script src="{{ asset_url('tools.js') }}" defer></script>{% endblock %}
+{% block scripts %}<link rel="stylesheet" href="{{ asset_url('feeds.css') }}"><script src="{{ asset_url('tools.js') }}" defer></script>{% endblock %}
+{#- 既存Toolsの新刊チェックと同じく、状態ごとの表に分ける。最新まで持っている作品と要確認・エラーは閉じておく。 -#}
+{% macro title_cell(row) -%}
+<a class="vol-title" href="{{ url_for('tools.series', series_id=row.series_id) }}">{{ row.title }}</a>{% if row.recent %} <span class="tag tag-new" title="{{ recent_days }}日以内に発売">NEW</span>{% endif %}
+{% if row.review_count %}<span class="tag tag-review" title="著者・版・発売日を確認できなかった候補があります">要確認 {{ row.review_count }}</span>{% endif %}
+{% if row.incomplete %}<span class="tag tag-review" title="取得上限のため一部の候補だけを確認しました">一部のみ</span>{% endif %}
+{%- endmacro %}
+{% macro latest_cell(row) -%}
+{% if row.paper is not none and row.digital is not none and row.paper != row.digital %}紙{{ row.paper }}/電子{{ row.digital }}{% if row.digital > row.paper %} <span class="tag tag-digital">電子先行</span>{% endif %}{% elif row.latest %}{{ row.latest }}巻{% if row.digital is not none and row.paper is none %} <span class="tag tag-digital">電子</span>{% endif %}{% else %}<span class="muted">該当なし</span>{% endif %}
+{%- endmacro %}
+{% macro preorder_cell(row) -%}
+{% if row.preorder %}<strong>{{ row.preorder.volume }}巻</strong> <span class="tag {{ 'tag-digital' if row.preorder.media == 'digital' else 'tag-paper' }}">{{ '電子' if row.preorder.media == 'digital' else '紙' }}</span> <span class="muted">{{ row.preorder.date or '日付未定' }}</span>{% else %}<span class="muted">—</span>{% endif %}
+{%- endmacro %}
+{% macro links_cell(row) -%}
+<span class="search-links">{% if row.store %}<a href="{{ row.store }}" target="_blank" rel="noopener noreferrer">楽天</a>{% endif %}<a href="https://www.amazon.co.jp/s?k={{ row.title|urlencode }}" target="_blank" rel="noopener noreferrer">Amazon</a><a href="https://bookwalker.jp/search/?word={{ row.title|urlencode }}" target="_blank" rel="noopener noreferrer">BookWalker</a><a href="https://bookmeter.com/search?keyword={{ row.title|urlencode }}" target="_blank" rel="noopener noreferrer">読書メーター</a></span>
+<button class="link-button" type="button" data-tool-action="/api/tools/new-volumes/check" data-payload="{{ {'force': true, 'series_ids': [row.series_id]}|tojson|forceescape }}">再チェック</button>
+{%- endmacro %}
+{% macro section(name, label, dot, rows, open, note='') -%}
+<details class="tool-panel vol-section" id="sec-{{ name }}"{% if open %} open{% endif %}>
+  <summary><span class="status-dot {{ dot }}"></span>{{ label }} <span class="count">（{{ rows|length }}件）</span></summary>
+  {% if note %}<p class="muted vol-note">{{ note }}</p>{% endif %}
+  {% if rows %}<div class="table-scroll">{{ caller() }}</div>{% else %}<p class="tool-empty">該当なし</p>{% endif %}
+</details>
+{%- endmacro %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">NEW VOLUMES</p><h1>持っている漫画の新刊</h1><p>紙・電子の発売済みの巻と予約を分けて確認します。分冊版・関連本・曖昧な候補は巻数に含めません。</p></div></div>
-<div class="hero-actions"><button class="button primary" data-tool-action="/api/tools/new-volumes/check">追加・変更分をチェック</button><button class="button" data-tool-action="/api/tools/new-volumes/check" data-payload='{"new_only":true}'>未登録の作品だけ</button><button class="button" data-tool-action="/api/tools/new-volumes/check" data-payload='{"force":true}'>全件を再チェック</button></div>
-<nav class="source-pages" aria-label="新刊の表示">{% for value,label in [('all','すべて'),('new','新刊あり'),('preorder','予約あり'),('review','要確認')] %}<a class="button {{ 'primary' if state == value else '' }}" href="{{ url_for('tools.new_volumes',state=value) }}">{{ label }}</a>{% endfor %}</nav>
-{% if notification and notification.data.error %}<p class="notice warning">新刊は確認しましたが、通知に失敗しました。{{ notification.data.error }}</p>{% endif %}<div id="tool-status" role="status" class="notice section" hidden></div>
-<div class="source-results section">{% for row in rows %}<article class="panel"><div class="panel-heading"><h2>{{ row.title }}</h2><span class="chip {{ 'completed' if row.new else '' }}">{{ '新刊あり' if row.new else '確認済み' }}</span></div><p>所持 {{ row.local_max }}巻 · 確認できた発売済み {{ row.latest or '不明' }}巻</p>{% for source,value in row.sources.items() %}<div class="section"><strong>{{ '紙 · 楽天Books' if source == 'paper' else '電子 · 楽天Kobo' }}</strong>{% if value.latest %}<p>{{ value.latest.volume }}巻 · {{ value.latest.date }}{% if value.latest.url %} · <a href="{{ value.latest.url }}" target="_blank" rel="noopener noreferrer">書誌情報</a>{% endif %}</p>{% endif %}{% for upcoming in value.upcoming %}<p>予約: {{ upcoming.volume }}巻 · {{ upcoming.date }}</p>{% endfor %}{% if value.review %}<p class="warning-text">{{ value.review|length }}件は著者・版・発売日の確認が必要です。</p>{% endif %}{% if value.incomplete %}<p class="warning-text">取得上限があるため一部の候補です。</p>{% endif %}</div>{% endfor %}{% for error in row.errors %}<p class="warning-text">{{ error }}</p>{% endfor %}<div class="hero-actions"><a class="button" href="{{ url_for('tools.series',series_id=row.series_id) }}">作品・対応付けを確認</a><button class="button" data-tool-action="/api/tools/new-volumes/check" data-payload="{{ {'force':true,'series_ids':[row.series_id]}|tojson|forceescape }}">この作品を再チェック</button></div></article>{% else %}<div class="empty-state"><h2>新刊の確認結果はまだありません</h2><p>対象は連載中の作品です。蔵書情報を更新してからチェックしてください。</p><button class="button" data-tool-action="/api/tools/inventory/refresh">蔵書情報を更新</button></div>{% endfor %}</div>
-{{ ui.pagination(pagination) }}
+<div class="tool-head">
+  <h1 class="tool-title">{{ ui.icon('square-plus', 25) }}新刊チェック<span class="tag tag-paper">楽天</span></h1>
+  <div class="tool-actions">
+    <button class="button primary" type="button" data-tool-action="/api/tools/new-volumes/check">追加・変更分をチェック</button>
+    <button class="button" type="button" data-tool-action="/api/tools/new-volumes/check" data-payload='{"new_only":true}'>未チェックの作品だけ</button>
+    <button class="button" type="button" data-tool-action="/api/tools/new-volumes/check" data-payload='{"force":true}' data-confirm="連載中のすべての作品を問い合わせ直します。時間がかかります。実行しますか？">全件を再チェック</button>
+  </div>
+</div>
+<div class="tool-lead">
+  {% if total %}
+  最終チェック: {% if checked %}<time class="local-time" datetime="{{ checked }}">{{ checked }}</time>{% else %}—{% endif %}
+  ｜ 全 {{ total }} 件{% if unchecked %}（未チェック {{ unchecked }} 件）{% endif %}
+  ｜ 主軸: 楽天Books（紙）＋楽天Kobo（電子）
+  {% set recent = sections.new|selectattr('recent')|list %}{% if recent %}<br><span class="tag tag-new">NEW</span> 直近{{ recent_days }}日に発売された新刊: {{ recent|length }}件{% endif %}
+  {% else %}チェック未実行です。［追加・変更分をチェック］を押すと、連載中の作品の新刊と予約を確認します。{% endif %}
+  ｜ <a href="{{ url_for('metadata.index') }}">書誌の対応付け</a>
+</div>
+{% if notification and notification.data.error %}<p class="notice warning">新刊は確認しましたが、通知に失敗しました。{{ notification.data.error }}</p>{% endif %}
+<p id="tool-status" class="notice" role="status" hidden></p>
+
+{% if total %}
+{% call section('new', '新刊あり（既に発売）', 'good', sections.new, true) %}<table><thead><tr><th>シリーズ</th><th>ローカル</th><th>最新（発売済）</th><th>差分</th><th>予約</th><th>リンク</th></tr></thead><tbody>
+{% for row in sections.new %}<tr><td>{{ title_cell(row) }}</td><td>{{ row.local_max }}巻</td><td>{{ latest_cell(row) }}</td><td class="vol-diff">+{{ row.diff }}</td><td>{{ preorder_cell(row) }}</td><td>{{ links_cell(row) }}</td></tr>{% endfor %}
+</tbody></table>{% endcall %}
+
+{% call section('preorder', '予約受付中（既刊は追いつき済）', 'info', sections.preorder, true) %}<table><thead><tr><th>シリーズ</th><th>ローカル</th><th>予約（次巻）</th><th>発売予定</th><th>リンク</th></tr></thead><tbody>
+{% for row in sections.preorder %}<tr><td>{{ title_cell(row) }}</td><td>{{ row.local_max }}巻</td><td><strong>{{ row.preorder.volume }}巻</strong> <span class="tag {{ 'tag-digital' if row.preorder.media == 'digital' else 'tag-paper' }}">{{ '電子' if row.preorder.media == 'digital' else '紙' }}</span></td><td>{{ row.preorder.date or '日付未定' }}</td><td>{{ links_cell(row) }}</td></tr>{% endfor %}
+</tbody></table>{% endcall %}
+
+{% call section('current', '最新まで持ってる', 'neutral', sections.current, false) %}<table><thead><tr><th>シリーズ</th><th>巻数</th><th>予約</th><th>リンク</th></tr></thead><tbody>
+{% for row in sections.current %}<tr><td>{{ title_cell(row) }}</td><td>{{ row.local_max }}巻 = {{ latest_cell(row) }}</td><td>{{ preorder_cell(row) }}</td><td>{{ links_cell(row) }}</td></tr>{% endfor %}
+</tbody></table>{% endcall %}
+
+{% call section('review', '要確認・不明', 'warn', sections.review, false, '楽天Books・Koboとも巻数を特定できなかった、または取得できた既刊がローカルより少ない作品です。作品名から書誌の対応付けを確認してください。') %}<table><thead><tr><th>シリーズ</th><th>ローカル</th><th>取得値</th><th>リンク</th></tr></thead><tbody>
+{% for row in sections.review %}<tr><td>{{ title_cell(row) }}</td><td>{{ row.local_max }}巻</td><td>{{ latest_cell(row) }}</td><td>{{ links_cell(row) }}</td></tr>{% endfor %}
+</tbody></table>{% endcall %}
+
+{% if sections.stale %}{% call section('stale', '取得失敗のため前回値を表示中', 'warn', sections.stale, true, '問い合わせに失敗した作品です。表示値は前回チェック時のもので、上の各表にもその値のまま載っています。時間をおいて再チェックしてください。') %}<table><thead><tr><th>作品</th><th>最終取得</th><th>エラー</th></tr></thead><tbody>
+{% for row in sections.stale %}<tr><td>{{ row.title }}</td><td>{% if row.updated %}<time class="local-time" datetime="{{ row.updated }}">{{ row.updated }}</time>{% else %}—{% endif %}</td><td>{{ row.errors|join(' / ') }}</td></tr>{% endfor %}
+</tbody></table>{% endcall %}{% endif %}
+
+{% call section('errors', 'エラー', 'error', sections.errors, false) %}<table><thead><tr><th>シリーズ</th><th>エラー</th></tr></thead><tbody>
+{% for row in sections.errors %}<tr><td>{{ title_cell(row) }}</td><td>{{ row.errors|join(' / ') }}</td></tr>{% endfor %}
+</tbody></table>{% endcall %}
+{% else %}
+<section class="tool-panel"><div class="tool-empty"><p>新刊の確認結果はまだありません。対象は連載中の作品です。</p><button class="button" type="button" data-tool-action="/api/tools/inventory/refresh">蔵書情報を更新</button></div></section>
+{% endif %}
 {% endblock %}

@@ -84,7 +84,7 @@ def built_in_features() -> list[Feature]:
                 NavigationItem("発見", "tools.discovery", "compass"),
                 NavigationItem("新刊", "tools.new_volumes", "square-plus"),
                 NavigationItem("今期アニメ", "tools.anime", "tv"),
-                NavigationItem("ランキング", "tools.rankings", "chart"),
+                NavigationItem("ランキング", "tools.rankings", "chart", ("tools.ranking_year",)),
                 NavigationItem("読書状況", "tools.reading", "clock", shown=False),
             ), portal=(
                 PortalLink("discovery", "発見", "tools.discovery", "compass", "紹介記事・楽天Kobo売上・マンバ通信・コミックナタリー"),

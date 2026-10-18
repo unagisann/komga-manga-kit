@@ -58,3 +58,17 @@
   {% if link.match and link.match.warnings %}<p class="form-hint">保存時の確認事項:</p><ul class="form-hint">{% for warning in link.match.warnings %}<li>{{ warning }}</li>{% endfor %}</ul>{% endif %}
 </details>{% endif %}
 {%- endmacro %}
+
+{% macro match_editor(item, source_key) -%}
+<details class="feed-match"><summary>所持判定を修正</summary>
+  <form class="tool-match" data-source="{{ source_key }}" data-entry="{{ item.id }}">
+    <label>蔵書を検索<input type="search" data-owned-search maxlength="200" placeholder="作品名・著者"></label>
+    <label>対応する作品<select name="series_id"><option value="">未所持</option>{% if item.owned %}<option value="{{ item.series_id }}" selected>{{ item.matched_title }}</option>{% endif %}</select></label>
+    <button class="button" type="submit">対応を保存</button>
+  </form>
+</details>
+{%- endmacro %}
+
+{% macro owned_action(item, links) -%}
+{% set link = links.get(item.id) %}{% if link and link.read %}<a class="read" href="{{ link.read }}">読む</a>{% elif link %}<a class="read" href="{{ link.series }}">作品をひらく</a>{% endif %}
+{%- endmacro %}

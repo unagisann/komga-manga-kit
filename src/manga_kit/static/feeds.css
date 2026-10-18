@@ -1,0 +1,73 @@
+/* New volumes, current anime and award rankings: the existing Tools layouts on the shared tool and cover styles. */
+.tool-title-meta { color:var(--muted); font-size:13px; font-weight:500; letter-spacing:0; }
+.tool-title .chip, .tool-title .tag { align-self:center; }
+.tool-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+.tool-lead a { color:var(--accent); }
+.feed-note { margin:12px 0 0; }
+.feed-note-inline { color:var(--muted); font-size:12px; }
+.feed-search { flex:1; min-width:200px; min-height:36px; border-radius:9px; }
+.feed-section-title { display:flex; align-items:center; gap:9px; margin:30px 0 14px; font-size:19px; }
+.feed-section-title .icon { color:var(--accent); }
+.tool-panel + .tool-panel { margin-top:18px; }
+
+/* Cover cards: secondary links next to "読む", the rank badge and the match editor. */
+.feed-card.is-owned .thumb { border-color:var(--accent); }
+.feed-card .acts a:not(.read) { padding:5px 9px; border:1px solid var(--border); border-radius:7px; background:var(--surface-raised); color:var(--muted); font-size:11.5px; font-weight:600; }
+.feed-card .acts a:not(.read):hover { border-color:var(--accent); color:var(--text); }
+.feed-card .sub .chip { font-size:10px; }
+.rank-badge { position:absolute; top:6px; left:6px; z-index:1; display:grid; place-items:center; min-width:24px; height:24px; padding:0 6px; border-radius:7px; background:var(--accent); color:var(--surface-raised); font-size:13px; font-weight:700; }
+:root[data-theme="dark"] .rank-badge { color:#242420; }
+.feed-match { margin-top:8px; font-size:11px; }
+.feed-match summary { color:var(--muted); cursor:pointer; }
+.feed-match .tool-match { display:grid; gap:8px; margin-top:10px; }
+.feed-match label { display:grid; gap:4px; min-width:0; }
+.feed-match input, .feed-match select { width:100%; min-width:0; font-size:12px; }
+.feed-match .button { justify-self:start; padding:7px 10px; font-size:11px; }
+
+/* Award years: one tile per year with the categories it holds. */
+.year-tiles { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:14px; }
+.year-tile { display:flex; flex-direction:column; gap:8px; }
+.year-tile h2 { font-size:18px; }
+.year-icon { color:var(--accent); }
+.year-links { display:flex; flex-wrap:wrap; gap:6px; margin-top:auto; }
+.year-links .button { padding:6px 10px; font-size:11.5px; }
+.year-switch { flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; scrollbar-width:thin; }
+.year-switch .filter-chip { flex-shrink:0; }
+
+/* New volume tables, grouped like the existing Tools. */
+.vol-section > summary { display:flex; align-items:center; gap:9px; font-size:17px; font-weight:650; cursor:pointer; list-style:none; }
+.vol-section > summary::-webkit-details-marker { display:none; }
+.vol-section > summary::after { content:"▶"; margin-left:auto; color:var(--muted); font-size:11px; }
+.vol-section[open] > summary::after { content:"▼"; }
+.vol-section > summary .count { color:var(--muted); font-size:13px; font-weight:500; }
+.vol-section[open] > summary { margin-bottom:14px; }
+.vol-section .table-scroll table { min-width:720px; font-size:12.5px; }
+.vol-note { margin-bottom:12px; font-size:12px; }
+.vol-title { font-weight:650; }
+.vol-title:hover { color:var(--accent); }
+.vol-diff { color:var(--success); font-weight:700; font-variant-numeric:tabular-nums; }
+.status-dot.good { background:var(--success); }
+.status-dot.info { background:var(--accent); }
+.status-dot.neutral { background:var(--muted); }
+.status-dot.warn { background:var(--warning); }
+.status-dot.error { background:#c9524a; }
+.tag { display:inline-flex; align-items:center; padding:1px 6px; border:1px solid currentColor; border-radius:5px; font-size:10px; font-weight:700; line-height:1.5; white-space:nowrap; vertical-align:middle; }
+.tag-new { color:var(--success); }
+.tag-review { color:var(--warning); }
+.tag-paper { color:var(--accent); }
+.tag-digital { color:#7c6bb0; }
+:root[data-theme="dark"] .tag-digital { color:#b48fe0; }
+.search-links { display:flex; flex-wrap:wrap; gap:4px 10px; }
+.search-links a, .link-button { color:var(--accent); font-size:11.5px; }
+.link-button { margin-top:6px; padding:0; border:0; background:none; text-decoration:underline; cursor:pointer; }
+.link-button:disabled { color:var(--muted); }
+@media (max-width:640px) {
+  .tool-actions { justify-content:flex-start; }
+  .tool-actions .button { flex:1 1 auto; min-height:44px; }
+  .feed-search { flex-basis:100%; }
+  .year-tiles { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+}
+.tool-head { flex-wrap:wrap; }
+.vol-section > summary { color:var(--text); }
+.vol-section .tool-empty { padding:14px 0 4px; text-align:left; }
+.vol-section > summary .count { white-space:nowrap; }

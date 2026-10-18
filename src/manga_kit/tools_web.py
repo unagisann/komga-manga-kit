@@ -1,5 +1,5 @@
 """Functional tools pages; visual consolidation follows feature parity."""
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from flask import Blueprint, Response, current_app, jsonify, render_template, request, url_for
@@ -29,11 +29,28 @@ def requested_year():
         raise ConfigError("年は整数で指定してください。") from None
 
 
+def owned_links(entries):
+    """Where an owned entry opens: Komga when it knows the series, otherwise the series page here."""
+    inventory = service("inventory")
+    rows = {row["id"]: row for row in inventory.cached()["series"]}
+    links = {}
+    for entry in entries:
+        row = rows.get(entry.get("series_id")) if entry.get("owned") else None
+        if row:
+            read = inventory.read_url(row) if row.get("komga_id") else ""
+            links[entry["id"]] = {"read": read if read.startswith(("http://", "https://")) else "",
+                                  "series": url_for("tools.series", series_id=row["id"])}
+    return links
+
+
 @tools.get("/anime")
 def anime():
     data = service("feeds").read("anime")
-    return render_template("tools_feed.html", title="今期アニメと持っている原作", kind="anime", data=data,
-                           source_key="feed:anime", period=season(), year=None, category=None)
+    entries = (data or {}).get("entries", [])
+    counts = {"owned": sum(bool(item.get("owned")) for item in entries), "manga": sum(bool(item.get("has_manga")) for item in entries),
+              "continuing": sum(bool(item.get("continuing")) for item in entries), "all": len(entries)}
+    return render_template("anime.html", data=data, counts=counts, links=owned_links(entries),
+                           source_key="feed:anime", current=season())
 
 
 @tools.get("/discovery")
@@ -56,36 +73,81 @@ def refresh_discovery():
     return job_response(service("feeds").submit_discovery())
 
 
+def ranking_years():
+    return list(range(season()["year"], 2014, -1))
+
+
 @tools.get("/tsugimanga")
 def rankings():
-    year, category = requested_year(), request.args.get("category", "comics")
-    data = service("feeds").read("ranking", year, category)
-    return render_template("tools_feed.html", title="次にくるマンガ大賞", kind="ranking", data=data,
-                           source_key=f"feed:ranking:{year}:{category}", year=year, category=category,
-                           years=range(season()["year"], 2014, -1), categories=CATEGORIES)
+    if "year" in request.args or "category" in request.args:
+        # Earlier links carried the year and category as query parameters.
+        from flask import redirect
+        year, category = requested_year(), request.args.get("category", "comics")
+        service("feeds").key("ranking", year, category)
+        return redirect(url_for("tools.ranking_year", year=year, category=category))
+    demo = current_app.config["MANGA_KIT"].demo
+    cached = set(service("state").cached_keys("feed:ranking:"))
+    available = {year: [category for category in CATEGORIES if demo or f"feed:ranking:{year}:{category}" in cached]
+                 for year in ranking_years()}
+    return render_template("rankings.html", years=ranking_years(), available=available, categories=CATEGORIES)
 
 
 @tools.get("/tsugimanga/<int:year>/<category>")
 def ranking_year(year, category):
-    from flask import redirect
-    service("feeds").key("ranking", year, category)
-    return redirect(url_for("tools.rankings", year=year, category=category))
+    data = service("feeds").read("ranking", year, category)
+    entries = (data or {}).get("entries", [])
+    return render_template("ranking.html", data=data, year=year, category=category, categories=CATEGORIES,
+                           years=ranking_years(), links=owned_links(entries),
+                           ranked=[item for item in entries if item.get("rank")],
+                           nominees=[item for item in entries if not item.get("rank")],
+                           source_key=f"feed:ranking:{year}:{category}")
+
+
+RECENT_RELEASE_DAYS = 14
+
+
+def volume_sections(rows, today):
+    """The existing Tools groups: released, pre-order only, up to date, needs review, previous values and errors."""
+    from .inventory import number
+    sections = {name: [] for name in ("new", "preorder", "current", "review", "stale", "errors")}
+    recent = (today - timedelta(days=RECENT_RELEASE_DAYS)).isoformat()
+    for row in rows:
+        sources = row.get("sources", {})
+        released = {name: source["latest"] for name, source in sources.items() if source.get("latest")}
+        upcoming = sorted(({**item, "media": name} for name, source in sources.items() for item in source.get("upcoming", [])),
+                          key=lambda item: (item.get("date") or "", number(item.get("volume")) or 0))
+        local, latest = number(row.get("local_max")), number(row.get("latest"))
+        paper, digital = (number((released.get(name) or {}).get("volume")) for name in ("paper", "digital"))
+        store = next((item["url"] for item in [*released.values(), *upcoming] if item.get("url")), "")
+        view = {**row, "paper": paper, "digital": digital, "preorder": upcoming[0] if upcoming else None, "store": store,
+                "diff": latest - local if latest is not None and local is not None else None,
+                "recent": bool(row.get("new") and any((item.get("date") or "") >= recent for item in released.values())),
+                "review_count": sum(len(source.get("review", [])) for source in sources.values()),
+                "incomplete": any(source.get("incomplete") for source in sources.values())}
+        if row.get("stale"):
+            sections["stale"].append(view)
+        if row.get("errors") and latest is None and not row.get("stale"):
+            sections["errors"].append(view)
+        elif row.get("new"):
+            sections["new"].append(view)
+        elif upcoming:
+            sections["preorder"].append(view)
+        elif latest is not None and local is not None and latest >= local:
+            sections["current"].append(view)
+        else:
+            sections["review"].append(view)
+    sections["preorder"].sort(key=lambda view: (view["preorder"].get("date") or "", view["title"]))
+    return sections
 
 
 @tools.get("/new_volumes")
 def new_volumes():
     rows = service("new_volumes").read()
-    state = request.args.get("state", "all")
-    if state not in {"all", "new", "review", "preorder"}:
-        raise ConfigError("表示する新刊の状態を選んでください。")
-    if state == "new":
-        rows = [row for row in rows if row.get("new")]
-    elif state == "review":
-        rows = [row for row in rows if row.get("errors") or any(source.get("review") or source.get("incomplete") for source in row.get("sources", {}).values())]
-    elif state == "preorder":
-        rows = [row for row in rows if any(source.get("upcoming") for source in row.get("sources", {}).values())]
-    rows, paging = paginate(rows, size=30)
-    return render_template("new_volumes.html", rows=rows, pagination=paging, state=state,
+    today = datetime.now(ZoneInfo("Asia/Tokyo")).date()
+    ongoing = {row["id"] for row in service("inventory").cached()["series"] if row["status"] == "ongoing"}
+    checked = max((row.get("updated") or "" for row in rows), default="")
+    return render_template("new_volumes.html", sections=volume_sections(rows, today), total=len(rows), checked=checked,
+                           unchecked=len(ongoing - {row["series_id"] for row in rows}), recent_days=RECENT_RELEASE_DAYS,
                            notification=service("state").cached("newvol:notification:last"))
 
 

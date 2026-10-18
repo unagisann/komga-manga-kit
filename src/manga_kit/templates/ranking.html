@@ -1,0 +1,50 @@
+{% extends 'base.html' %}{% import 'components.html' as ui %}
+{% block title %}次にくるマンガ大賞 {{ year }} {{ categories[category] }}{% endblock %}
+{% block scripts %}<link rel="stylesheet" href="{{ asset_url('feeds.css') }}"><script src="{{ asset_url('tools.js') }}" defer></script>{% endblock %}
+{#- 既存Toolsの年別ページと同じ構成。順位のある作品とノミネートを分けて表紙で並べる。 -#}
+{% macro card(item, number) -%}
+<article class="cover-card feed-card{{ ' is-owned' if item.owned else '' }}">
+  <div class="thumb">
+    {% if item.rank %}<span class="rank-badge">{{ item.rank }}</span>{% endif %}
+    {% if item.image %}<img src="{{ item.image }}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">{% else %}{{ ui.cover(item, number) }}{% endif %}
+    {% if item.owned %}<span class="cover-badge">所持</span>{% endif %}
+  </div>
+  <h3 class="cap">{{ item.title }}</h3>
+  <p class="sub">{{ item.author }}{% if item.point %} ・{{ '{:,}'.format(item.point) }}pt{% endif %}</p>
+  <div class="acts">
+    {{ ui.owned_action(item, links) }}
+    {% for store in item.stores or [] %}<a href="{{ store.url }}" target="_blank" rel="noopener noreferrer">{{ store.label }}</a>{% endfor %}
+  </div>
+  {{ ui.match_editor(item, source_key) }}
+</article>
+{%- endmacro %}
+{% block content %}
+<div class="tool-head">
+  <h1 class="tool-title">{{ ui.icon('chart', 25) }}次にくるマンガ大賞 {{ year }}<span class="tool-title-meta">{{ categories[category] }}</span></h1>
+  <button class="button" type="button" data-tool-action="/api/tools/feeds/ranking/refresh" data-payload="{{ {'year': year, 'category': category}|tojson|forceescape }}">{{ ui.icon('refresh', 16) }}この年を取得／更新</button>
+</div>
+<div class="tool-lead">
+  {% if data %}{% set details = data.details or {} %}
+  エントリー {{ details.entries or '-' }} 作品 ／ 総投票 {{ '{:,}'.format(details.votes) if details.votes else '-' }} 票
+  ｜ 所持 <strong>{{ data.owned_count }}</strong> / {{ data.entries|length }} 作品
+  ｜ 取得 {% if data.updated %}<time class="local-time" datetime="{{ data.updated }}">{{ data.updated }}</time>{% else %}—{% endif %}
+  {% if data.source_url %}｜ <a href="{{ data.source_url }}" target="_blank" rel="noopener noreferrer">公式 ↗</a>{% endif %}{% if data.demo %} ｜ 架空の情報です{% endif %}
+  {% else %}未取得です。［この年を取得／更新］を押してください。{% endif %}
+  ｜ <a href="{{ url_for('tools.rankings') }}">← 歴代一覧</a>
+</div>
+<div class="tool-filters">
+  <div class="tool-row" role="group" aria-label="部門"><span class="tool-label">部門</span>{% for key, label in categories.items() %}<a class="filter-chip{{ ' active' if key == category else '' }}" href="{{ url_for('tools.ranking_year', year=year, category=key) }}"{% if key == category %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</div>
+  <div class="tool-row year-switch" role="group" aria-label="年"><span class="tool-label">年</span>{% for value in years %}<a class="filter-chip{{ ' active' if value == year else '' }}" href="{{ url_for('tools.ranking_year', year=value, category=category) }}"{% if value == year %} aria-current="page"{% endif %}>{{ value }}</a>{% endfor %}</div>
+</div>
+<p id="tool-status" class="notice" role="status" hidden></p>
+{% if not data %}
+<section class="tool-panel"><div class="tool-empty"><p>この年のデータはまだ取得していません。<br>上の［この年を取得／更新］、または<a href="{{ url_for('tools.rankings') }}">歴代一覧</a>から一括取得できます。</p></div></section>
+{% else %}
+<h2 class="feed-section-title">{{ ui.icon('chart', 18) }}ランキング（{{ ranked|length }}作品）</h2>
+<section class="tool-panel">{% if ranked %}<div class="cover-grid">{% for item in ranked %}{{ card(item, loop.index0) }}{% endfor %}</div>{% else %}<p class="tool-empty">順位の付いた作品はありません。</p>{% endif %}</section>
+{% if nominees %}
+<h2 class="feed-section-title">{{ ui.icon('book', 18) }}ノミネート（{{ nominees|length }}作品）</h2>
+<section class="tool-panel"><div class="cover-grid">{% for item in nominees %}{{ card(item, loop.index0 + 2) }}{% endfor %}</div></section>
+{% endif %}
+{% endif %}
+{% endblock %}

@@ -3,31 +3,31 @@
 {% block scripts %}<script src="{{ asset_url('library.js') }}" defer></script>{% endblock %}
 {#- 既存Toolsのライブラリ探索と同じ構成。絞り込みはリンクとフォームで動き、library.js が再読み込みなしで結果だけ差し替える。 -#}
 {% macro chip(field, value, label, count=none) -%}
-<a class="lib-chip{{ ' active' if current[field] == value else '' }}" href="{{ link(**{field: value}) }}" data-f="{{ field }}" data-v="{{ value }}"{% if current[field] == value %} aria-current="true"{% endif %}>{{ label }}{% if count is not none %} <span class="count">{{ count }}</span>{% endif %}</a>
+<a class="filter-chip{{ ' active' if current[field] == value else '' }}" href="{{ link(**{field: value}) }}" data-f="{{ field }}" data-v="{{ value }}"{% if current[field] == value %} aria-current="true"{% endif %}>{{ label }}{% if count is not none %} <span class="count">{{ count }}</span>{% endif %}</a>
 {%- endmacro %}
 {% block content %}
-<div class="lib-head">
-  <h1 class="lib-title">{{ ui.icon('search', 25) }}ライブラリ探索</h1>
+<div class="tool-head">
+  <h1 class="tool-title">{{ ui.icon('search', 25) }}ライブラリ探索</h1>
   <button class="button" id="refresh-library" type="button">{{ ui.icon('refresh', 16) }}読み直す</button>
 </div>
-<p class="lib-lead">蔵書 <strong>{{ facets.total }}</strong> シリーズ（メタデータ取得済み {{ facets.with_metadata }}）を <strong>読者層・出版社・年代・評価</strong> で絞り込めます。</p>
+<p class="tool-lead">蔵書 <strong>{{ facets.total }}</strong> シリーズ（メタデータ取得済み {{ facets.with_metadata }}）を <strong>読者層・出版社・年代・評価</strong> で絞り込めます。</p>
 {{ ui.scan_notice(scan) }}
 
-<form class="lib-filters" id="library-filters" action="{{ url_for('library.index') }}" method="get" role="search" aria-label="蔵書の絞り込み">
+<form class="tool-filters" id="library-filters" action="{{ url_for('library.index') }}" method="get" role="search" aria-label="蔵書の絞り込み">
   {% for field in ('demographic', 'status', 'decade') %}<input type="hidden" name="{{ field }}" value="{{ current[field] }}">{% endfor %}
-  <div class="lib-row" role="group" aria-label="読者層">
-    <span class="lib-label">読者層</span>
+  <div class="tool-row" role="group" aria-label="読者層">
+    <span class="tool-label">読者層</span>
     {{ chip('demographic', '', 'すべて') }}{% for name, count in facets.demographics %}{{ chip('demographic', name, name, count) }}{% endfor %}{% if facets.unknown %}{{ chip('demographic', '不明', '不明', facets.unknown) }}{% endif %}
   </div>
-  <div class="lib-row" role="group" aria-label="状態">
-    <span class="lib-label">状態</span>
+  <div class="tool-row" role="group" aria-label="状態">
+    <span class="tool-label">状態</span>
     {{ chip('status', '', 'すべて') }}{{ chip('status', 'completed', '完結') }}{{ chip('status', 'ongoing', '未完') }}
   </div>
-  <div class="lib-row" role="group" aria-label="年代">
-    <span class="lib-label">年代</span>
+  <div class="tool-row" role="group" aria-label="年代">
+    <span class="tool-label">年代</span>
     {{ chip('decade', '', 'すべて') }}{% for decade, count in facets.decades %}{{ chip('decade', decade, decade ~ '年代', count) }}{% endfor %}
   </div>
-  <div class="lib-row lib-fields">
+  <div class="tool-row tool-fields">
     <input type="search" name="q" value="{{ current.q }}" placeholder="タイトル・作者・出版社で検索..." aria-label="タイトル・作者・出版社で検索" maxlength="200">
     <select name="author" aria-label="作者"><option value="">作者: すべて（全{{ facets.author_total }}人）</option>{% for name, count in facets.authors %}<option value="{{ name }}"{% if current.author == name %} selected{% endif %}>{{ name }} ({{ count }})</option>{% endfor %}</select>
     <select name="publisher" aria-label="出版社"><option value="">出版社: すべて</option>{% for name, count in facets.publishers %}<option value="{{ name }}"{% if current.publisher == name %} selected{% endif %}>{{ name }} ({{ count }})</option>{% endfor %}</select>
@@ -35,7 +35,7 @@
   </div>
 </form>
 
-<section class="lib-results" id="library-results" data-url="{{ url_for('api.library_results') }}" aria-live="polite">
+<section class="tool-panel" id="library-results" data-url="{{ url_for('api.library_results') }}" aria-live="polite">
   {% include 'library_results.html' %}
 </section>
 {% endblock %}

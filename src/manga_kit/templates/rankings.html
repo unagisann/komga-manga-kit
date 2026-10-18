@@ -1,0 +1,25 @@
+{% extends 'base.html' %}{% import 'components.html' as ui %}
+{% block title %}次にくるマンガ大賞 歴代{% endblock %}
+{% block scripts %}<link rel="stylesheet" href="{{ asset_url('feeds.css') }}"><script src="{{ asset_url('tools.js') }}" defer></script>{% endblock %}
+{#- 既存Toolsの歴代一覧と同じ構成。年ごとの取得状況と、部門別ページへの入口を並べる。 -#}
+{% block content %}
+<div class="tool-head">
+  <h1 class="tool-title">{{ ui.icon('chart', 25) }}次にくるマンガ大賞<span class="tool-title-meta">歴代ランキング</span></h1>
+</div>
+<p class="tool-lead">マンガファンの投票で「次にくる」作品を決める賞（<a href="https://tsugimanga.jp/" target="_blank" rel="noopener noreferrer">tsugimanga.jp ↗</a>）の歴代結果を、自分のライブラリの<strong>所持状況つき</strong>で表示します。各年20位までが順位付きです。</p>
+<div class="tool-filters"><div class="tool-row">
+  <button class="button primary" type="button" data-tool-action="/api/tools/rankings/refresh-all" data-confirm="歴代すべて（全年 × {{ categories|length }}部門）を取得します。数分かかります。実行しますか？">{{ ui.icon('refresh', 16) }}歴代すべて取得／更新</button>
+  <span class="feed-note-inline">初回はデータ取得に数分かかります（全年 × {{ categories|length }}部門）。</span>
+</div></div>
+<p id="tool-status" class="notice" role="status" hidden></p>
+<div class="year-tiles">
+  {% for year in years %}
+  <section class="panel year-tile" aria-labelledby="year-{{ year }}">
+    <span class="year-icon">{{ ui.icon('chart', 20) }}</span>
+    <h2 id="year-{{ year }}">{{ year }}年</h2>
+    <p>{% if available[year] %}<span class="chip completed">取得済{% if available[year]|length < categories|length %}（{{ available[year]|length }}部門）{% endif %}</span>{% else %}<span class="chip">未取得</span>{% endif %}</p>
+    <div class="year-links">{% for key, label in categories.items() %}<a class="button" href="{{ url_for('tools.ranking_year', year=year, category=key) }}">{{ label }}</a>{% endfor %}</div>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

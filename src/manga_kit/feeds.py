@@ -23,7 +23,7 @@ ANIME_QUERY = """query KitSeason($season:MediaSeason,$year:Int,$status:MediaStat
   Page(page:$page,perPage:50) { pageInfo { hasNextPage }
     media(type:ANIME,season:$season,seasonYear:$year,status:$status,sort:POPULARITY_DESC) {
       id title { native romaji english } source format status season seasonYear episodes
-      coverImage { large } siteUrl popularity
+      coverImage { large } siteUrl popularity studios(isMain:true) { nodes { name } }
       relations { edges { relationType node { type title { native romaji } } } }
     }
   }
@@ -133,7 +133,12 @@ def parse_curated(content):
     return list(unique.values())[:300]
 
 
-def parse_ranking(content):
+# Store pages linked from the award entries; anything else is dropped.
+RANKING_STORES = {"bookwalker": ("BOOK☆WALKER", {"bookwalker.jp"}), "nicomanga": ("ニコニコ漫画", {"manga.nicovideo.jp"})}
+
+
+def ranking_page(content):
+    """Ranked entries first, then nominees without a rank, with points, store links and the vote totals."""
     match = re.search(rb'<script\b[^>]*\bid=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>', content, re.S)
     try:
         data = json.loads(match[1])["props"]["pageProps"]["data"]
@@ -143,15 +148,27 @@ def parse_ranking(content):
         values = []
         for index, item in enumerate(items):
             title = plain_text(item.get("title"), 200)
-            rank = int(item.get("rank") or index + 1)
-            if not title or not 1 <= rank <= 1000:
+            rank = int(item["rank"]) if item.get("rank") else None
+            point = item.get("point")
+            if not title or rank is not None and not 1 <= rank <= 1000:
                 raise ValueError
-            values.append({"id": str(item.get("id") or rank), "title": title, "rank": rank,
+            stores = item.get("store") if isinstance(item.get("store"), dict) else {}
+            links = [{"label": label, "url": url} for key, (label, hosts) in RANKING_STORES.items()
+                     if (url := safe_url(stores.get(key), hosts))]
+            values.append({"id": str(item.get("id") or rank or "nominee-" + str(index)), "title": title, "rank": rank,
+                           "point": point if type(point) is int and 0 <= point <= 10**9 else None,
                            "author": plain_text(item.get("author"), 200), "award": plain_text(item.get("award"), 100),
-                           "image": safe_url(item.get("thumbnail"), {"img.tsugimanga.jp"}), "url": ""})
-        return sorted(values, key=lambda item: item["rank"])
+                           "image": safe_url(item.get("thumbnail"), {"img.tsugimanga.jp"}), "stores": links, "url": ""})
+        details = data.get("details") if isinstance(data.get("details"), dict) else {}
+        totals = {key: value if type(value) is int and 0 <= value <= 10**9 else None
+                  for key, value in (("entries", details.get("entryCount")), ("votes", details.get("voteCount")))}
+        return {"entries": sorted(values, key=lambda item: (item["rank"] is None, item["rank"] or 0)), "details": totals}
     except (ValueError, KeyError, TypeError, AttributeError):
         raise CatalogError("受賞作品の形式を確認できませんでした。前回の結果は保持しています。") from None
+
+
+def parse_ranking(content):
+    return ranking_page(content)["entries"]
 
 
 class FeedsService:
@@ -211,7 +228,7 @@ class FeedsService:
             result = self.anime(progress)
         elif kind == "ranking":
             url = f"https://tsugimanga.jp/winner/{year}/{category}"
-            result = {"entries": parse_ranking(self.http.fetch(url, provider="tsugimanga")), "source_url": url,
+            result = {**ranking_page(self.http.fetch(url, provider="tsugimanga")), "source_url": url,
                       "year": year, "category": category, "category_label": CATEGORIES[category]}
         elif kind == "rakuten":
             from .credentials import secret
@@ -265,7 +282,9 @@ class FeedsService:
                         title = plain_text(item["title"].get("native") or item["title"].get("romaji"), 200)
                         if not title:
                             raise ValueError
+                        studios = [plain_text(node.get("name"), 80) for node in ((item.get("studios") or {}).get("nodes") or [])[:3]]
                         items.append({"id": str(identifier), "title": title, "original_titles": originals,
+                                      "romaji": plain_text(item["title"].get("romaji"), 200), "studios": [name for name in studios if name],
                                       "has_manga": bool(originals) or item.get("source") in {"MANGA", "COMIC", "DOUJINSHI"},
                                       "continuing": status is not None, "source": str(item.get("source") or ""),
                                       "format": str(item.get("format") or ""), "episodes": item.get("episodes"),
@@ -285,6 +304,16 @@ class FeedsService:
         entries = [{"id": f"demo-{kind}-{index}", "title": row["title"], "author": row["author"],
                     "url": "", "rank": index + 1, "original_titles": [row["title"]], "has_manga": True,
                     "teaser": "架空の紹介記事です。", "continuing": index == 4} for index, row in enumerate(rows)]
+        if kind in {"anime", "ranking"}:
+            # Fictitious works the sample library does not own, so filters and nominees can be tried.
+            entries += [{"id": f"demo-{kind}-extra-{index}", "title": title, "author": "サンプル作者", "url": "", "rank": None,
+                         "original_titles": [title], "has_manga": index != 1, "teaser": "", "continuing": index == 0}
+                        for index, title in enumerate(["星をめぐる旅", "雨の日の約束", "森の図書室"])]
+            for index, entry in enumerate(entries):
+                if kind == "anime":
+                    entry.update(rank=None, studios=["架空スタジオ"], episodes=12 + index)
+                else:
+                    entry.update(rank=index + 1 if index < 5 else None, point=(5 - index) * 1000 if index < 5 else None, stores=[])
         if kind == "curated":
             entries = []
             for number, (title, group, published) in enumerate([
@@ -302,4 +331,5 @@ class FeedsService:
                                     "published": published, "total_volumes": str(index + 3) if group == "completed" else "",
                                     "teaser": "人との出会いと小さな変化を描く、架空の紹介作品です。"})
         return {"kind": kind, "entries": entries, "updated": None, "demo": True, **season(), "year": year or season()["year"],
+                "details": {"entries": len(entries), "votes": 12345} if kind == "ranking" else {},
                 "category": category, "category_label": CATEGORIES.get(category, "")}

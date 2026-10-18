@@ -61,7 +61,7 @@
 
 <div class="discovery-tools" aria-label="作品の絞り込み">
   <div class="discovery-filters" role="group" aria-label="所持状況">
-    {% for value, label in [('all', 'すべて'), ('owned', '蔵書あり'), ('missing', '未所持')] %}<button class="lib-chip{{ ' active' if loop.first else '' }}" type="button" data-discovery-filter="{{ value }}" aria-pressed="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>{% endfor %}
+    {% for value, label in [('all', 'すべて'), ('owned', '蔵書あり'), ('missing', '未所持')] %}<button class="filter-chip{{ ' active' if loop.first else '' }}" type="button" data-discovery-filter="{{ value }}" aria-pressed="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>{% endfor %}
   </div>
   <input id="discovery-search" type="search" placeholder="作品名・著者で絞り込み" aria-label="作品名・著者で絞り込み" maxlength="200">
 </div>
