@@ -3,7 +3,7 @@
 {% block scripts %}<script src="{{ asset_url('tools_settings.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="page-heading"><div><p class="eyebrow">SETTINGS</p><h1>環境設定</h1><p>Webで変えられる設定と、設定ファイルで決める項目をまとめています。Webで保存した設定は再起動しなくても反映されます。</p></div></div>
-<nav class="settings-toc" aria-label="設定の項目">{% for anchor, label in [('display', '表示するメニュー'), ('komga', 'Komga'), ('sources', '情報源'), ('ai', 'AI補助'), ('notify', '新刊通知・読書状況'), ('credentials', '認証情報'), ('config', '設定ファイルで決める項目')] %}<a href="#{{ anchor }}">{{ label }}</a>{% endfor %}</nav>
+<nav class="settings-toc" aria-label="設定の項目">{% for anchor, label in [('display', '表示するメニュー'), ('komga', 'Komga'), ('sources', '情報源'), ('ai', 'AI補助'), ('notify', '新刊通知'), ('credentials', '認証情報'), ('config', '設定ファイルで決める項目')] %}<a href="#{{ anchor }}">{{ label }}</a>{% endfor %}</nav>
 
 <section class="panel section settings-block" id="display" aria-labelledby="display-title">
   <div class="panel-heading"><h2 id="display-title">表示するメニュー</h2></div>
@@ -63,10 +63,9 @@
 </section>
 
 <section class="panel section settings-block" id="notify" aria-labelledby="notify-title">
-  <div class="panel-heading"><h2 id="notify-title">新刊通知・読書状況</h2></div>
+  <div class="panel-heading"><h2 id="notify-title">新刊通知</h2></div>
   <div class="settings-checks"><label><input name="notify_enabled" type="checkbox" {% if preferences.tools.notify_enabled %}checked{% endif %}>新刊が見つかったら通知する</label></div>
-  <div class="tool-facts"><label>読書状況のアカウント（JSON）<textarea name="reading_accounts" rows="4">{{ preferences.tools.reading_accounts|tojson }}</textarea></label></div>
-  <p class="form-hint">例: [{"name":"自分","api_key_env":"KOMGA_READER_KEY"}]。各アカウント本人のAPIキーを登録します。</p>
+  <p class="form-hint">通知先のURLは「認証情報」の <code>{{ settings.tools.notify_url_env }}</code> か、同じ名前の環境変数で登録します。</p>
 </section>
 <div class="settings-save"><p id="tool-status" class="form-hint" role="status" hidden></p><button class="button primary">Komga・情報源・AI・通知を保存</button></div>
 </form>

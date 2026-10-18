@@ -17,7 +17,7 @@ from .durability import durable_mkdir
 
 STEPS = {"scan": "Komgaスキャン", "inventory": "蔵書情報", "bibliography": "書誌・読み・著者の補完",
          "classification": "タグ・ジャンル補完", "anime": "今期アニメ", "new_volumes": "新刊チェック",
-         "discovery": "漫画の発見", "rankings": "今年のマンガ大賞", "reading": "読書状況", "shelves": "スマート本棚"}
+         "discovery": "漫画の発見", "rankings": "今年のマンガ大賞", "shelves": "スマート本棚"}
 DEFAULTS = {"enabled": False, "time": "04:00", "steps": ["inventory"], "post_import": False, "auto_apply": False}
 
 
@@ -43,7 +43,10 @@ class Automation:
 
     def config(self):
         value = self.store.cached("automation:config")
-        return {"revision": value["revision"] if value else 0, **(value["data"] if value else DEFAULTS)}
+        data = dict(value["data"]) if value else dict(DEFAULTS)
+        # Steps removed from the application (such as reading status) are skipped, not failed.
+        data["steps"] = [step for step in data["steps"] if step in STEPS] or list(DEFAULTS["steps"])
+        return {"revision": value["revision"] if value else 0, **data}
 
     def save(self, data, revision):
         if (not isinstance(data, dict) or set(data) != set(DEFAULTS) or any(type(data[key]) is not bool for key in ("enabled", "post_import", "auto_apply"))
@@ -177,8 +180,6 @@ class Automation:
         if key == "rankings":
             from .feeds import CATEGORIES, season
             return {"sources": [services["feeds"].refresh("ranking", season()["year"], category) for category in CATEGORIES]}
-        if key == "reading":
-            return services["reading"].refresh()
         if key == "shelves":
             operation = services["smart_shelves"].prepare()
             if auto_apply:

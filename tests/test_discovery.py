@@ -200,8 +200,9 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIn('href="/shelf/series/' + row['id'] + '"', html)
         cover = client.get('/api/tools/books/' + row['books'][0]['id'] + '/thumbnail')
         self.assertEqual(cover.status_code, 200)
-        self.assertEqual(cover.mimetype, 'image/png')
-        self.assertEqual(cover.data, image)
+        # Local first pages are sent as a small JPEG rather than the original image.
+        self.assertEqual(cover.mimetype, 'image/jpeg')
+        self.assertTrue(cover.data.startswith(b'\xff\xd8'))
         missing = next(item for item in app.extensions['feeds'].read('curated')['entries'] if not item['owned'])
         saved = client.post('/api/tools/matches', json={'source': 'feed:curated',
                             'entry_id': missing['id'], 'series_id': row['id']})

@@ -36,7 +36,6 @@ def secret(settings, name):
 def save_credentials(settings, values):
     allowed = {settings.api_key_env, settings.rakuten.application_id_env, settings.rakuten.access_key_env,
                settings.tools.ai_key_env, settings.tools.notify_url_env}
-    allowed.update(account["api_key_env"] for account in settings.tools.reading_accounts)
     if (not isinstance(values, dict) or set(values) - allowed or any(not isinstance(v, str) or len(v) > 4096
             or any(ord(c) < 32 for c in v) for v in values.values())):
         raise ConfigError("登録できる認証情報の項目と形式を確認してください。")

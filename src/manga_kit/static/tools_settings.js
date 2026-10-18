@@ -7,7 +7,6 @@
     try {
       ['kobo_enabled','anime_enabled','discovery_enabled','rankings_enabled','mangaupdates_enabled','ai_enabled','notify_enabled'].forEach(key => tools[key] = form.elements[key].checked);
       ['ai_provider','ai_url','ai_model','public_komga_url'].forEach(key => tools[key] = form.elements[key].value);
-      tools.reading_accounts = JSON.parse(form.elements.reading_accounts.value);
       await save('/api/tools/settings',{revision:Number(form.dataset.revision),komga_url:form.elements.komga_url.value,
         rakuten:{enabled:form.elements.rakuten_enabled.checked,origin:form.elements.rakuten_origin.value},anilist:{enabled:form.elements.anilist_enabled.checked},tools});
     } catch(error) { show(error); }

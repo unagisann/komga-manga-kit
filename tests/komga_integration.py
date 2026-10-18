@@ -615,42 +615,31 @@ class KomgaIntegrationTests(unittest.TestCase):
         self.assertEqual([book['id'] for book in self.wait_books()], [book['id'] for book in books])
         self.assertEqual(self.hashes(), self.before_files)
 
-    def test_smart_shelves_and_two_reader_api_views_preserve_private_shelves_and_progress(self):
-        from manga_kit.config import ToolsSettings
+    def test_smart_shelves_preserve_private_shelves_and_reader_progress(self):
         from manga_kit.feeds import season
         books = self.wait_books()
         self.call(self.readers[0], 'PATCH', '/api/v1/books/' + books[0]['id'] + '/read-progress', {'page': 3})
         self.call(self.readers[1], 'PATCH', '/api/v1/books/' + books[0]['id'] + '/read-progress', {'completed': True})
         before = self.progress(books)
-        keys = [self.call(reader, 'POST', '/api/v2/users/me/api-keys', {'comment': 'isolated reader view'})['key'] for reader in self.readers]
-        settings = replace(self.service.settings, web_execution_enabled=True, tools=ToolsSettings(reading_accounts=(
-            {'name': '検証読者A', 'api_key_env': 'ISOLATED_READER_A'}, {'name': '検証読者B', 'api_key_env': 'ISOLATED_READER_B'})))
-        with patch.dict(os.environ, {'ISOLATED_READER_A': keys[0], 'ISOLATED_READER_B': keys[1]}):
-            app = create_app(settings=settings)
-            self.addCleanup(app.extensions['jobs'].shutdown)
-            inventory = app.extensions['inventory']; inventory.refresh()
-            row = next(row for row in inventory.cached()['series'] if row['books'])
-            app.extensions['state'].cache('feed:anime', {**season(), 'entries': [{'id': 'fictitious-anime', 'title': row['title']}]})
-            personal = self.call(self.admin, 'POST', '/api/v1/collections', {'name': '個人の本棚-' + self.run_id, 'ordered': False, 'seriesIds': [books[0]['seriesId']]})
-            self.addCleanup(self.call, self.admin, 'DELETE', '/api/v1/collections/' + personal['id'])
-            shelves = app.extensions['smart_shelves']
-            operation = shelves.prepare()
-            try:
-                shelves.execute(operation['plan']['id'], operation['digest'])
-                self.assertEqual(self.call(self.admin, 'GET', '/api/v1/collections/' + personal['id']), personal)
-                result = app.extensions['reading'].refresh()
-                self.assertEqual(result['accounts'], 2, result)
-                first = app.extensions['reading'].read('検証読者A')['entries'][0]
-                second = app.extensions['reading'].read('検証読者B')['entries'][0]
-                self.assertEqual(next(book['progress']['page'] for book in first['books'] if book['komga_id'] == books[0]['id']), 3)
-                self.assertTrue(next(book['progress']['completed'] for book in second['books'] if book['komga_id'] == books[0]['id']))
-                self.assertEqual(self.progress(books), before)
-            finally:
-                state = shelves.inspect(operation['plan']['id'])
-                if state['status'] == 'completed':
-                    shelves.execute(operation['plan']['id'], operation['digest'], restore=True)
+        app = create_app(settings=replace(self.service.settings, web_execution_enabled=True))
+        self.addCleanup(app.extensions['jobs'].shutdown)
+        inventory = app.extensions['inventory']; inventory.refresh()
+        row = next(row for row in inventory.cached()['series'] if row['books'])
+        app.extensions['state'].cache('feed:anime', {**season(), 'entries': [{'id': 'fictitious-anime', 'title': row['title']}]})
+        personal = self.call(self.admin, 'POST', '/api/v1/collections', {'name': '個人の本棚-' + self.run_id, 'ordered': False, 'seriesIds': [books[0]['seriesId']]})
+        self.addCleanup(self.call, self.admin, 'DELETE', '/api/v1/collections/' + personal['id'])
+        shelves = app.extensions['smart_shelves']
+        operation = shelves.prepare()
+        try:
+            shelves.execute(operation['plan']['id'], operation['digest'])
+            self.assertEqual(self.call(self.admin, 'GET', '/api/v1/collections/' + personal['id']), personal)
             self.assertEqual(self.progress(books), before)
-            self.assertEqual(self.hashes(), self.before_files)
+        finally:
+            state = shelves.inspect(operation['plan']['id'])
+            if state['status'] == 'completed':
+                shelves.execute(operation['plan']['id'], operation['digest'], restore=True)
+        self.assertEqual(self.progress(books), before)
+        self.assertEqual(self.hashes(), self.before_files)
 
     def test_managed_archive_rebuild_retains_two_user_progress_and_restores_originals(self):
         from manga_kit.normalization import NormalizationOperations

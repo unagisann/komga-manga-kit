@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from flask import Blueprint, Response, current_app, jsonify, render_template, request, url_for
 
 from .config import ConfigError
+from .covers import small_image
 from .discovery import discovery_view
 from .feeds import CATEGORIES, DISCOVERY_FEEDS, season
 from .japanese import search_key
@@ -161,29 +162,6 @@ def series(series_id):
                            facts_revision=facts["revision"] if facts else 0)
 
 
-@tools.get("/reading")
-def reading():
-    require_admin_access()
-    reading_service = service("reading")
-    accounts = reading_service.accounts()
-    name = request.args.get("account", accounts[0]["name"])
-    data = reading_service.read(name)
-    state = request.args.get("state", "reading")
-    if state not in {"reading", "paused", "completed", "all"}:
-        raise ConfigError("読書状況を選んでください。")
-    rows = [item for item in (data or {}).get("entries", []) if state == "all" or item["state"] == state]
-    rows, paging = paginate(rows, 30)
-    last = service("state").cached("reading:last")
-    return render_template("reading.html", data=data, rows=rows, accounts=accounts, account=name, state=state,
-                           pagination=paging, errors=last["data"]["errors"] if last else [])
-
-
-@tools.post("/api/tools/reading/refresh")
-def reading_refresh():
-    require_admin_access(); body_with_keys(set())
-    return job_response(service("jobs").submit_task("reading_refresh", service("reading").refresh))
-
-
 @tools.get("/api/tools/books/<book_id>/page/<int:page>")
 def book_page(book_id, page):
     if current_app.config["MANGA_KIT"].demo:
@@ -212,8 +190,27 @@ def book_thumbnail(book_id):
         except KomgaError:
             if not book.get("path"):
                 raise
-    data, mime = image or service("book_pages").image(book_id, 1)
-    return Response(data, mimetype=mime, headers={"Cache-Control": "private, max-age=86400"})
+    if image is None:
+        # A local first page can be several megabytes; send a small JPEG when it decodes.
+        data, mime = service("book_pages").image(book_id, 1)
+        small = small_image(data, 360)
+        image = (small, "image/jpeg") if small else (data, mime)
+    return Response(image[0], mimetype=image[1], headers={"Cache-Control": "private, max-age=86400"})
+
+
+@tools.get("/api/tools/books/<book_id>/page/<int:page>/preview")
+def book_page_preview(book_id, page):
+    """A small page image for the cover lists and the page editor; the caller puts the book size in the URL."""
+    if current_app.config["MANGA_KIT"].demo:
+        from flask import redirect
+        return redirect(url_for("static", filename="mark.svg"))
+    book = service("book_pages").find(book_id, local=False)
+    if not book.get("path") and book.get("komga_id"):
+        data, mime = service("komga").image(book["komga_id"], page)
+    else:
+        data, mime = service("book_pages").image(book_id, page)
+    small = small_image(data, 240)
+    return Response(small or data, mimetype="image/jpeg" if small else mime, headers={"Cache-Control": "private, max-age=86400"})
 
 
 @tools.post("/api/tools/series/<series_id>/facts")

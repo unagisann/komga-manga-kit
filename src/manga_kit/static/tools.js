@@ -26,7 +26,9 @@
     try {
       const data = await post(button.dataset.toolAction, JSON.parse(button.dataset.payload || '{}'));
       if (button.dataset.reviewUrl && data.plan) { location.href = button.dataset.reviewUrl+'?plan='+encodeURIComponent(data.plan.id); return; }
-      if (data.id && data.status) await follow(data,button.dataset.reviewUrl); else { show('保存しました。'); location.reload(); }
+      if (data.id && data.status) await follow(data,button.dataset.reviewUrl);
+      else if (button.dataset.next) location.href = button.dataset.next;
+      else { show('保存しました。'); location.reload(); }
     } catch (error) { show(error.message); button.disabled = false; }
   }));
   document.querySelectorAll('.tool-match').forEach(form => {
@@ -70,10 +72,13 @@
     ['enabled','post_import','auto_apply'].forEach(key => body[key] = form.elements[key].checked);
     try { await post('/api/tools/automation/settings',body); location.reload(); } catch(error) { show(error.message); }
   });
-  document.querySelector('#tool-completion')?.addEventListener('submit',async event => {
+  document.querySelector('#tool-move')?.addEventListener('submit',async event => {
     event.preventDefault(); const series_ids = [...event.target.querySelectorAll('[name=series_ids]:checked')].map(input => input.value);
-    try { await follow(await post('/api/tools/maintenance/completion/preview',{series_ids}),'/completion'); } catch(error) { show(error.message); }
+    try { await follow(await post('/api/tools/maintenance/move/preview',{series_ids}),'/moves'); } catch(error) { show(error.message); }
   });
+  document.querySelectorAll('[data-check-all]').forEach(toggle => toggle.addEventListener('change', () => {
+    toggle.closest('form').querySelectorAll('[name=series_ids]:not(:disabled)').forEach(input => { input.checked = toggle.checked; });
+  }));
   document.querySelector('#tool-komga-sync')?.addEventListener('submit',async event => {
     event.preventDefault(); const form = event.target, mode = form.elements.mode.value;
     const body = {mode,replace_locked:form.elements.replace_locked.checked,replace_lists:form.elements.replace_lists.checked};

@@ -1,6 +1,59 @@
 {% extends 'base.html' %}{% import 'components.html' as ui %}
-{% block title %}表紙・ページ修正{% endblock %}
+{% block title %}表紙修正{% endblock %}
+{% block scripts %}<link rel="stylesheet" href="{{ asset_url('covers.css') }}"><script src="{{ asset_url('tools.js') }}" defer></script>{% endblock %}
+{#- 既存Toolsの表紙修正と同じ構成。判定の区分・確認状態・検索で絞り、1枚目を見て修正画面へ進む。 -#}
+{% set state_labels = {'todo': '未対応', 'done': '完了', 'skip': 'スキップ'} %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">PAGES</p><h1>表紙・ページ修正</h1><p>表紙の選択、ページの並べ替え、不要ページの削除を確認して実行します。</p></div></div><a class="button" href="{{ url_for('maintenance.page_trash') }}">履歴・ゴミ箱</a><form class="filter-panel" method="get"><input name="q" value="{{ query }}" aria-label="作品を検索"><button class="button">検索</button></form>
-<div class="source-results section">{% for item in rows %}<article class="panel"><h2>{{ item.series.title }} {{ item.book.volume }}巻</h2><p>{{ {'review':'要確認','hold':'保留','done':'確認済み','unmarked':'未確認'}.get(marks.get('pages:mark:' ~ item.book.id,{}).get('data',{}).get('status','unmarked')) }}</p><a class="button" href="{{ url_for('maintenance.edit_pages',book_id=item.book.id) }}">ページを確認</a></article>{% else %}<p>該当する書庫がありません。</p>{% endfor %}</div>{{ ui.pagination(pagination,'冊') }}
+<div class="tool-head">
+  <div>
+    <h1 class="tool-title">{{ ui.icon('image', 25) }}表紙修正</h1>
+    <p class="tool-lead">1枚目を確認し、ページの並べ替えや不要ページの削除を、変更内容を確認してから実行します。</p>
+  </div>
+  <a class="button" href="{{ url_for('maintenance.page_trash') }}">履歴・ゴミ箱</a>
+</div>
+<div class="cover-stats" aria-label="処理状況">
+  <span><strong>{{ stats.books }}</strong> 全書庫</span><span><strong>{{ stats.flagged }}</strong> 要確認</span>
+  <span><strong>{{ stats.done }}</strong> 完了</span><span><strong>{{ stats.skip }}</strong> スキップ</span>
+  <span class="muted">{% if screened %}最終確認 <time class="local-time" datetime="{{ screened }}">{{ screened }}</time>{% if demo %}（架空の判定）{% endif %}{% else %}まだ表紙を調べていません{% endif %}</span>
+</div>
+<p id="tool-status" class="notice" role="status" hidden></p>
+{% if not screened %}<p class="notice">［表紙を調べる］を押すと、全書庫の1枚目と2枚目の色を調べて「1枚目が白黒」などに分けます。調べる前でも「全書庫」から検索して修正できます。</p>{% endif %}
+
+<div class="tool-filters">
+  <div class="tool-row" role="group" aria-label="対象">
+    <span class="tool-label">対象</span>
+    {% for key, label in buckets.items() %}<a class="filter-chip{{ ' active' if key == bucket else '' }}" href="{{ link(bucket=key, status='todo') }}"{% if key == bucket %} aria-current="true"{% endif %}>{{ label }} <span class="count">{{ counts[key] }}</span></a>{% endfor %}
+    <a class="filter-chip{{ ' active' if bucket == 'lib' else '' }}" href="{{ link(bucket='lib', status='all') }}"{% if bucket == 'lib' %} aria-current="true"{% endif %}>全書庫 <span class="count">{{ stats.books }}</span></a>
+  </div>
+  <div class="tool-row" role="group" aria-label="状態">
+    <span class="tool-label">状態</span>
+    {% for value, label in [('todo', '未対応'), ('done', '完了'), ('skip', 'スキップ'), ('all', '全部')] %}<a class="filter-chip{{ ' active' if value == status else '' }}" href="{{ link(status=value) }}"{% if value == status %} aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}
+  </div>
+  <div class="tool-row tool-fields">
+    <form class="cover-search" method="get" action="{{ url_for('maintenance.page_books') }}" role="search">
+      <input type="hidden" name="bucket" value="{{ bucket }}"><input type="hidden" name="status" value="{{ status }}">
+      <input type="search" name="q" value="{{ query }}" placeholder="タイトル・巻・作者名で検索" aria-label="タイトル・巻・作者名で検索" maxlength="200">
+      <button class="button" type="submit">検索</button>{% if query %}<a class="button" href="{{ link(q='') }}">クリア</a>{% endif %}
+    </form>
+    <button class="button" type="button" data-tool-action="/api/tools/covers/screen">{{ ui.icon('refresh', 16) }}表紙を調べる</button>
+    {% if screened %}<button class="link-button" type="button" data-tool-action="/api/tools/covers/screen" data-payload='{"force":true}' data-confirm="全書庫を最初から調べ直します。初回と同じ時間がかかります。実行しますか？">すべて調べ直す</button>{% endif %}
+  </div>
+</div>
+
+<section class="tool-panel">
+  <p class="tool-meta"><strong>{{ pagination.total }}</strong>件中 {{ pagination.start }}–{{ pagination.end }}件{% if query %} ・検索: {{ query }}{% endif %}</p>
+  {% if rows %}<div class="table-scroll"><table class="cover-table">
+    <thead><tr><th class="cover-number">#</th><th>{{ '1枚目・2枚目' if bucket == 'mono_color' else '1枚目' }}</th><th>状態</th><th>作品 / 巻</th><th>判定理由</th></tr></thead>
+    <tbody>{% for item in rows %}{% set version = item.book.size or none %}
+      <tr class="{{ 'is-reviewed' if item.state != 'todo' else '' }}">
+        <td class="cover-number">{{ pagination.start + loop.index0 }}</td>
+        <td><span class="cover-previews">{% for page in ([1, 2] if bucket == 'mono_color' else [1]) %}<img src="{{ url_for('tools.book_page_preview', book_id=item.book.id, page=page, v=version) }}" alt="{{ page }}ページ目" width="52" height="74" loading="lazy" decoding="async">{% endfor %}</span></td>
+        <td><span class="cover-state cover-state-{{ item.state }}">{{ state_labels[item.state] }}</span></td>
+        <td><a class="cover-name" href="{{ url_for('maintenance.edit_pages', book_id=item.book.id, back=request.full_path) }}">{{ item.series.title }} {{ item.book.volume }}{{ '巻' if item.book.volume else '' }}</a><span class="cover-path">{{ item.book.path }}</span></td>
+        <td>{{ item.verdict.reason or '—' }}</td>
+      </tr>{% endfor %}
+    </tbody></table></div>
+  {% else %}<p class="tool-empty">条件に合う書庫がありません。</p>{% endif %}
+  {{ ui.pagination(pagination, '冊') }}
+</section>
 {% endblock %}

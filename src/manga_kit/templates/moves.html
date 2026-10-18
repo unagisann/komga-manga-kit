@@ -1,0 +1,56 @@
+{% extends 'base.html' %}{% import 'components.html' as ui %}
+{% block title %}書籍移動{% endblock %}
+{% block scripts %}<link rel="stylesheet" href="{{ asset_url('covers.css') }}"><script src="{{ asset_url('tools.js') }}" defer></script>{% endblock %}
+{#- 整理ルールが決める場所と今の場所が違う作品を選び、移動先と衝突を確認してから移す。完結した作品の移動もここで行う。 -#}
+{% block content %}
+<div class="tool-head">
+  <div>
+    <h1 class="tool-title">{{ ui.icon('folder', 25) }}書籍移動</h1>
+    <p class="tool-lead">整理ルールが決める場所と、今の場所が違う作品です。完結した作品の移動もここで行います。移動先と衝突を確認してから実行し、処理履歴から元に戻せます。</p>
+  </div>
+  <a class="button" href="{{ url_for('organize.index') }}">整理ルールを確認</a>
+</div>
+<p id="tool-status" class="notice" role="status" hidden></p>
+
+{% if operation %}
+<section class="tool-panel page-operation">
+  <h2>確認した移動</h2>
+  <p>状態: {{ operation.status }}</p>
+  <ul class="move-plan">{% for group in operation.plan.groups or [] %}<li><code>{{ group.source }}</code> → <code>{{ group.target }}</code></li>{% endfor %}</ul>
+  {% if operation.status == 'planned' %}<button class="button primary" type="button" data-tool-action="/api/tools/maintenance/{{ operation.plan.id }}/execute" data-payload="{{ {'confirm': operation.digest}|tojson|forceescape }}">確認した移動を実行</button>
+  {% elif operation.status in ['completed', 'failed', 'running', 'restoring'] %}<button class="button" type="button" data-tool-action="/api/tools/maintenance/{{ operation.plan.id }}/restore" data-payload="{{ {'confirm': operation.digest}|tojson|forceescape }}">元に戻す</button>{% endif %}
+  <p class="form-hint">移動後は「作品情報の反映」で、Komgaの完結タグ・連載状態を確認して反映できます。</p>
+</section>
+{% endif %}
+
+<div class="tool-filters">
+  <div class="tool-row" role="group" aria-label="状態">
+    <span class="tool-label">状態</span>
+    {% for value, label in [('', 'すべて'), ('ongoing', '連載中'), ('completed', '完結'), ('unknown', '未分類')] %}<a class="filter-chip{{ ' active' if value == status else '' }}" href="{{ url_for('maintenance.moves', status=value or none, q=query or none) }}"{% if value == status %} aria-current="true"{% endif %}>{{ label }}{% if value %} <span class="count">{{ counts[value] }}</span>{% else %} <span class="count">{{ total }}</span>{% endif %}</a>{% endfor %}
+  </div>
+  <div class="tool-row tool-fields">
+    <form class="cover-search" method="get" action="{{ url_for('maintenance.moves') }}" role="search">
+      {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+      <input type="search" name="q" value="{{ query }}" placeholder="タイトル・作者・フォルダ名で検索..." aria-label="タイトル・作者・フォルダ名で検索" maxlength="200">
+      <button class="button" type="submit">検索</button>
+    </form>
+  </div>
+</div>
+
+<form id="tool-move" class="tool-panel">
+  <p class="tool-meta"><strong>{{ pagination.total }}</strong>件中 {{ pagination.start }}–{{ pagination.end }}件</p>
+  {% if rows %}
+  <div class="table-scroll"><table class="cover-table move-table">
+    <thead><tr><th><label class="move-check"><input type="checkbox" data-check-all aria-label="このページをすべて選択"></label></th><th>作品</th><th>状態</th><th>今の場所 → 移動先</th></tr></thead>
+    <tbody>{% for row in rows %}<tr>
+      <td><label class="move-check"><input type="checkbox" name="series_ids" value="{{ row.id }}"{% if row.issues %} disabled{% endif %} aria-label="{{ row.title }}を選ぶ"></label></td>
+      <td><span class="cover-name">{{ row.title }}</span>{% if row.author %}<span class="cover-path">{{ row.author }}</span>{% endif %}</td>
+      <td><span class="chip {{ row.status }}">{{ status_labels.get(row.status, row.status) }}</span></td>
+      <td><code class="move-path">{{ row.source }}</code>{% if row.target %}<span class="move-arrow">↓</span><code class="move-path">{{ row.target }}</code>{% endif %}{% for issue in row.issues %}<p class="warning-text">{{ issue }}</p>{% endfor %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  <div class="settings-actions"><button class="button" type="reset">選択解除</button><button class="button primary" type="submit">移動先と衝突を確認</button></div>
+  {% else %}<p class="tool-empty">整理ルールの場所と違う作品はありません。</p>{% endif %}
+  {{ ui.pagination(pagination, '作品') }}
+</form>
+{% endblock %}

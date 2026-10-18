@@ -27,7 +27,6 @@ from .feeds import FeedsService
 from .new_volumes import NewVolumeService
 from .book_pages import BookPages
 from .preferences import Preferences
-from .reading import ReadingService
 from .smart_shelves import SmartShelves
 from .ai_assist import AIAssist
 from .page_editor import PageEditor
@@ -64,9 +63,10 @@ def create_app(config_path=None, *, settings=None, features=None):
     app.extensions.update(inventory=inventory, feeds=FeedsService(settings, store, inventory, app.extensions["jobs"]),
                           new_volumes=NewVolumeService(settings, store, inventory, app.extensions["jobs"]),
                           book_pages=BookPages(settings, inventory))
-    app.extensions["reading"] = ReadingService(settings, store, inventory)
     app.extensions["ai_assist"] = AIAssist(settings, store, app.extensions["metadata"])
     app.extensions["page_editor"] = PageEditor(settings, store, inventory, app.extensions["book_pages"])
+    from .covers import CoverScreening
+    app.extensions["covers"] = CoverScreening(settings, store, inventory, app.extensions["jobs"])
     app.extensions["maintenance_ops"] = MaintenanceOperations(settings, store, inventory, app.extensions["komga"])
     app.extensions["smart_shelves"] = SmartShelves(settings, store, inventory, app.extensions["feeds"],
                                                  app.extensions["new_volumes"], app.extensions["komga"])
@@ -127,7 +127,7 @@ def create_app(config_path=None, *, settings=None, features=None):
                 "provider_labels": PROVIDER_LABELS,
                 "status_labels": {"ongoing": "連載中", "completed": "完結", "unknown": "未分類"},
                 "komga_status_labels": {"ONGOING": "連載中", "ENDED": "完結", "HIATUS": "休載", "ABANDONED": "打ち切り"},
-                "job_labels": {"automation": "自動更新・取り込み後の処理", "ai_generate": "AIの提案取得", "reading_refresh": "読書状況の更新", "shelf_execute": "スマート本棚の同期", "shelf_restore": "スマート本棚の復元", "pages_execute": "表紙・ページの修正", "pages_restore": "ページ修正の復元", "maintenance_preview": "管理操作の差分確認", "maintenance_execute": "管理操作の実行", "maintenance_restore": "管理操作の復元", "source_refresh": "情報源の更新", "inventory_refresh": "蔵書情報の更新", "new_volume_check": "新刊チェック", "normalization_check": "追加・変更分の確認", "normalization_execute": "ノーマライズの実行", "normalize": "ノーマライズ", "normalization_restore": "ノーマライズの復元", "enrichment": "自動補完の候補取得", "scan": "蔵書スキャン", "preview": "整理プレビュー", "organize": "整理の実行", "restore": "整理の復元",
+                "job_labels": {"automation": "自動更新・取り込み後の処理", "cover_screening": "表紙の確認", "ai_generate": "AIの提案取得", "shelf_execute": "スマート本棚の同期", "shelf_restore": "スマート本棚の復元", "pages_execute": "表紙・ページの修正", "pages_restore": "ページ修正の復元", "maintenance_preview": "管理操作の差分確認", "maintenance_execute": "管理操作の実行", "maintenance_restore": "管理操作の復元", "source_refresh": "情報源の更新", "inventory_refresh": "蔵書情報の更新", "new_volume_check": "新刊チェック", "normalization_check": "追加・変更分の確認", "normalization_execute": "ノーマライズの実行", "normalize": "ノーマライズ", "normalization_restore": "ノーマライズの復元", "enrichment": "自動補完の候補取得", "scan": "蔵書スキャン", "preview": "整理プレビュー", "organize": "整理の実行", "restore": "整理の復元",
                                "conversion": "CBZ生成", "conversion_restore": "CBZ生成の取り消し",
                                "komga_metadata": "Komga作品情報の反映", "komga_metadata_restore": "Komga作品情報の復元",
                                "komga_authors": "Komga著者情報の反映", "komga_authors_restore": "Komga著者情報の復元",

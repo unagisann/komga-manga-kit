@@ -8,7 +8,7 @@ from .config import ConfigError
 from .credentials import secret
 
 TOOLS_FIELDS = {"kobo_enabled", "anime_enabled", "discovery_enabled", "rankings_enabled", "mangaupdates_enabled",
-                "ai_enabled", "notify_enabled", "ai_provider", "ai_url", "ai_model", "public_komga_url", "reading_accounts"}
+                "ai_enabled", "notify_enabled", "ai_provider", "ai_url", "ai_model", "public_komga_url"}
 
 
 class Preferences:
@@ -27,6 +27,10 @@ class Preferences:
         if not isinstance(data, dict) or set(data) - {"komga_url", "rakuten", "anilist", "tools"}:
             raise ConfigError("接続・情報源の設定項目を確認してください。")
         tools = data.get("tools", {})
+        if isinstance(tools, dict):
+            # Preferences saved before reading status was removed still carry its accounts.
+            from .config import LEGACY_TOOLS
+            tools = {key: value for key, value in tools.items() if key not in LEGACY_TOOLS}
         rakuten, anilist = data.get("rakuten", {}), data.get("anilist", {})
         if (not isinstance(tools, dict) or set(tools) - TOOLS_FIELDS
                 or not isinstance(rakuten, dict) or set(rakuten) - {"enabled", "origin"}
@@ -67,7 +71,6 @@ class Preferences:
         settings = self._current
         names = {settings.api_key_env, settings.rakuten.application_id_env, settings.rakuten.access_key_env,
                  settings.tools.ai_key_env, settings.tools.notify_url_env}
-        names.update(account["api_key_env"] for account in settings.tools.reading_accounts)
         return {"revision": self._revision, "komga_url": settings.komga_url,
                 "rakuten": {name: getattr(settings.rakuten, name) for name in ("enabled", "origin")},
                 "anilist": {"enabled": settings.anilist.enabled},

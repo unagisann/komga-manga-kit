@@ -1,9 +1,50 @@
-{% extends 'base.html' %}
-{% block title %}ページを確認{% endblock %}
-{% block scripts %}<script src="{{ asset_url('tools.js') }}" defer></script><script src="{{ asset_url('pages.js') }}" defer></script>{% endblock %}
+{% extends 'base.html' %}{% import 'components.html' as ui %}
+{% block title %}{{ series.title if series else '' }} {{ book.volume }}巻 · 表紙修正{% endblock %}
+{% block scripts %}<link rel="stylesheet" href="{{ asset_url('covers.css') }}"><script src="{{ asset_url('tools.js') }}" defer></script><script src="{{ asset_url('pages.js') }}" defer></script>{% endblock %}
+{#- 既存Toolsの1冊ごとの修正画面と同じ構成。並べ替えと削除の指定は、変更内容を確認してから実行する。 -#}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">PAGE EDITOR</p><h1>{{ book.volume }}巻 · ページを確認</h1><p>{{ pages|length }}ページ。先頭の画像を表紙にします。元書庫をバックアップしてから変更します。</p></div><a class="button" href="{{ url_for('maintenance.page_books') }}">巻の一覧へ</a></div>
-<div class="hero-actions">{% for key,label in [('review','要確認'),('hold','保留'),('done','確認済み')] %}<button class="button" data-tool-action="/api/tools/pages/{{ book.id }}/mark" data-payload="{{ {'status':key}|tojson|forceescape }}">{{ label }}</button>{% endfor %}</div><div id="tool-status" class="notice section" role="status" hidden></div>
-{% if operation %}<section class="panel section"><h2>変更内容の確認</h2><p>残すページ: {{ operation.plan.entries[0].archive.selected_pages|length }} / 元: {{ operation.plan.entries[0].archive.base.pages }}</p><p>状態: {{ operation.status }}</p>{% if operation.status == 'planned' %}<button class="button primary" data-tool-action="/api/tools/page-operations/{{ operation.plan.id }}/execute" data-payload="{{ {'confirm':operation.digest}|tojson|forceescape }}">確認した表紙・ページ順・削除を実行</button>{% elif operation.status in ['completed','failed','running','restoring'] and not operation.purged %}<button class="button" data-tool-action="/api/tools/page-operations/{{ operation.plan.id }}/restore" data-payload="{{ {'confirm':operation.digest}|tojson|forceescape }}">元書庫を復元する</button>{% endif %}</section>{% endif %}
-{% if pages %}<form id="page-editor" class="section" data-book="{{ book.id }}" data-fingerprint="{{ fingerprint }}"><button class="button primary">変更内容を確認</button><ol class="page-grid">{% for name in pages %}<li class="panel" data-name="{{ name }}"><label><input type="checkbox" name="keep" checked>このページを残す</label><img class="page-thumbnail" loading="lazy" src="{{ url_for('tools.book_page',book_id=book.id,page=loop.index) }}" alt="{{ loop.index }}ページ"><p class="form-hint">{{ name }}</p><div class="hero-actions"><button class="button" type="button" data-page-move="first">表紙にする</button><button class="button" type="button" data-page-move="up">前へ</button><button class="button" type="button" data-page-move="down">後へ</button></div></li>{% endfor %}</ol></form>{% endif %}
+<div class="tool-head">
+  <div>
+    <a class="back-link" href="{{ back }}">← 一覧に戻る</a>
+    <h1 class="tool-title">{{ ui.icon('image', 25) }}{{ series.title if series else '' }} {{ book.volume }}{{ '巻' if book.volume else '' }}</h1>
+    <p class="tool-lead">{% if book.path %}{{ book.path }}{% endif %}{% if pages %}（{{ pages|length }}ページ）{% endif %}</p>
+  </div>
+</div>
+<p id="tool-status" class="notice" role="status" hidden></p>
+
+{% if operation %}
+<section class="tool-panel page-operation">
+  <h2>変更内容の確認</h2>
+  <p>残すページ: {{ operation.plan.entries[0].archive.selected_pages|length }} / 元: {{ operation.plan.entries[0].archive.base.pages }}　・状態: {{ operation.status }}</p>
+  {% if operation.status == 'planned' %}<button class="button primary" type="button" data-tool-action="/api/tools/page-operations/{{ operation.plan.id }}/execute" data-payload="{{ {'confirm': operation.digest}|tojson|forceescape }}">確認した表紙・ページ順・削除を実行</button>
+  {% elif operation.status in ['completed', 'failed', 'running', 'restoring'] and not operation.purged %}<button class="button" type="button" data-tool-action="/api/tools/page-operations/{{ operation.plan.id }}/restore" data-payload="{{ {'confirm': operation.digest}|tojson|forceescape }}">元書庫を復元する</button>{% endif %}
+</section>
+{% endif %}
+
+{% if pages %}
+<form id="page-editor" class="page-editor" data-book="{{ book.id }}" data-fingerprint="{{ fingerprint }}">
+  <div class="tool-filters page-toolbar">
+    <div class="tool-row">
+      <span class="tool-label">判定理由</span><strong>{{ verdict.reason or 'なし' }}</strong>
+      <span class="page-dirty" id="page-dirty" hidden>● 未保存の変更あり</span><span class="page-delete-info" id="page-delete-info" hidden></span>
+    </div>
+    <div class="tool-row">
+      <button class="button primary" type="submit">変更内容を確認</button>
+      <button class="button" type="button" id="page-reset">変更を破棄</button>
+      <button class="button" type="button" data-tool-action="/api/tools/pages/{{ book.id }}/mark" data-payload='{"status":"done"}' data-next="{{ back }}">完了にして一覧へ</button>
+      <button class="button" type="button" data-tool-action="/api/tools/pages/{{ book.id }}/mark" data-payload='{"status":"hold"}' data-next="{{ back }}">スキップ</button>
+      {% if mark != 'unmarked' %}<button class="link-button" type="button" data-tool-action="/api/tools/pages/{{ book.id }}/mark" data-payload='{"status":"unmarked"}'>未対応に戻す</button>{% endif %}
+    </div>
+    <p class="form-hint">ドラッグ、または各ページの移動ボタンで順番を変えられます。先頭のページが表紙になります。「変更内容を確認」で差分を確かめてから実行し、元の書庫はバックアップします。</p>
+  </div>
+  <ol class="page-cards" id="page-cards" aria-label="ページの一覧">
+    {% for name in pages %}<li class="page-card" draggable="true" data-name="{{ name }}">
+      <div class="page-image"><img src="{{ url_for('tools.book_page_preview', book_id=book.id, page=loop.index, v=book.size or none) }}" alt="元の{{ loop.index }}ページ" loading="lazy" decoding="async" draggable="false"></div>
+      <div class="page-caption"><span class="page-position">#{{ loop.index }}</span><span>元P{{ loop.index }}</span></div>
+      <div class="page-moves"><button type="button" data-page-move="first">先頭</button><button type="button" data-page-move="up" aria-label="1つ前へ">◀</button><button type="button" data-page-move="down" aria-label="1つ後へ">▶</button><button type="button" data-page-move="last">末尾</button></div>
+      <button class="page-delete" type="button" data-page-delete aria-pressed="false">削除</button>
+    </li>{% endfor %}
+  </ol>
+</form>
+{% endif %}
 {% endblock %}

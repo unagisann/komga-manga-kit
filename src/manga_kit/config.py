@@ -119,6 +119,10 @@ class AniListSettings:
         return self
 
 
+# Settings of removed features, accepted and ignored so existing files keep loading.
+LEGACY_TOOLS = {"reading_accounts"}
+
+
 @dataclass(frozen=True)
 class ToolsSettings:
     kobo_enabled: bool = False
@@ -135,7 +139,6 @@ class ToolsSettings:
     notify_url_env: str = "MANGA_KIT_NOTIFY_URL"
     public_komga_url: str = ""
     credentials_file: str = ""
-    reading_accounts: tuple = ()
 
     def validate(self):
         for name in self.__dataclass_fields__:
@@ -163,17 +166,6 @@ class ToolsSettings:
             raise ConfigError("AIモデル名は200文字以内で指定してください。")
         if not isinstance(self.credentials_file, str) or len(self.credentials_file) > 4096:
             raise ConfigError("認証情報の保存先を確認してください。")
-        if not isinstance(self.reading_accounts, (tuple, list)) or len(self.reading_accounts) > 100:
-            raise ConfigError("読書状況のアカウントは100件以内で指定してください。")
-        names = set()
-        for account in self.reading_accounts:
-            if (not isinstance(account, dict) or set(account) != {"name", "api_key_env"}
-                    or not isinstance(account["name"], str) or not 1 <= len(account["name"]) <= 80
-                    or any(ord(c) < 32 for c in account["name"])
-                    or account["name"] in names or not isinstance(account["api_key_env"], str)
-                    or not re.fullmatch(r"[A-Z][A-Z0-9_]*", account["api_key_env"])):
-                raise ConfigError("アカウントには重複しない名前とAPIキーの環境変数名を指定してください。")
-            names.add(account["name"])
         return self
 
 
@@ -241,10 +233,11 @@ def load_settings(path: str | Path | None = None) -> Settings:
                   "komga": {"base_url", "api_key_env", "timeout_seconds", "path_mappings"},
                   "data": {"root"}, "execution": {"enabled", "web_enabled"},
                   "rakuten": {"enabled", "application_id_env", "access_key_env", "origin", "timeout_seconds"},
-                  "anilist": {"enabled", "timeout_seconds"}, "tools": set(ToolsSettings.__dataclass_fields__)}
+                  "anilist": {"enabled", "timeout_seconds"}, "tools": set(ToolsSettings.__dataclass_fields__) | LEGACY_TOOLS}
     for section, value in sections.items():
         if set(value) - valid_keys[section]:
             raise ConfigError(f"{section} に未知の設定項目があります。")
+    sections["tools"] = {key: value for key, value in sections["tools"].items() if key not in LEGACY_TOOLS}
     app, lib, layout, komga = (sections[n] for n in ("app", "library", "layout", "komga"))
     folders = layout.pop("status_folders", {})
     if not isinstance(folders, dict) or set(folders) - {"ongoing", "completed", "unknown"}:

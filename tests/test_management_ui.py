@@ -18,13 +18,12 @@ class ManagementUITests(unittest.TestCase):
 
     def test_main_navigation_groups_support_functions_under_management(self):
         destinations = ('/', '/library', '/discovery', '/new_volumes', '/anime',
-                        '/tsugimanga', '/completion', '/pages', '/manage')
+                        '/tsugimanga', '/moves', '/pages', '/manage')
         paths = {path: path for path in destinations}
         paths.update({path: '/manage' for path in ('/normalize', '/metadata', '/organize', '/jobs',
                                                  '/settings', '/roadmap', '/manage/metadata',
                                                  '/komga-sync', '/ai', '/smart-shelves', '/automation')})
         paths['/pages/trash'] = '/pages'
-        paths['/reading'] = '/'
         for path, selected in paths.items():
             with self.subTest(path=path):
                 response = self.client.get(path)
@@ -57,11 +56,13 @@ class ManagementUITests(unittest.TestCase):
                 self.assertNotIn('管理の切り替え', self.client.get(path).get_data(as_text=True))
         moved = self.client.get('/settings/tools')
         self.assertEqual((moved.status_code, moved.headers['Location']), (302, '/settings#komga'))
+        renamed = self.client.get('/completion?plan=abc')
+        self.assertEqual((renamed.status_code, renamed.headers['Location']), (302, '/moves?plan=abc'))
 
     def test_maintenance_tab_lists_only_tasks_and_history_only_records(self):
         html = self.client.get('/manage').get_data(as_text=True)
         body = html.split('aria-label="管理の切り替え">')[1].split('</nav>', 1)[1]
-        for href in ('/normalize', '/metadata', '/manage/metadata', '/ai', '/pages', '/completion', '/komga-sync', '/smart-shelves'):
+        for href in ('/normalize', '/metadata', '/manage/metadata', '/ai', '/pages', '/moves', '/komga-sync', '/smart-shelves'):
             self.assertIn('href="' + href + '"', body)
         self.assertIn('id="refresh-library"', body)
         for href in ('/settings', '/organize', '/jobs', '/automation'):

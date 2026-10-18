@@ -1,6 +1,5 @@
 from copy import deepcopy
 from dataclasses import replace
-from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
 import tempfile
@@ -12,7 +11,6 @@ import zipfile
 from manga_kit import create_app
 from manga_kit.ai_assist import summary_flags
 from manga_kit.config import ConfigError, Settings
-from manga_kit.reading import progress_state
 from manga_kit.smart_shelves import SmartShelves
 from manga_kit.state import StateConflict
 
@@ -114,14 +112,6 @@ class ToolOperationsTests(ToolFixture, unittest.TestCase):
         self.assertEqual(self.book.read_bytes(), generated)
         with self.assertRaises(ConfigError):
             editor.restore(operation['plan']['id'], operation['digest'])
-
-    def test_progress_groups_done_in_progress_and_old_reading(self):
-        now = datetime(2026, 10, 18, tzinfo=timezone.utc)
-        old = {'progress': {'completed': False, 'page': 3, 'lastModified': '2026-01-01T00:00:00Z'}}
-        self.assertEqual(progress_state([old, {'progress': {}}], now), 'paused')
-        self.assertEqual(progress_state([{'progress': {'completed': True}}], now), 'completed')
-        self.assertIsNone(progress_state([{'progress': {}}], now))
-        self.assertEqual(progress_state([{'progress': {'completed': True, 'lastModified': '2026-10-18T00:00:00Z'}}, {'progress': {}}], now), 'reading')
 
     def test_ai_suggestions_save_once_and_undo_without_touching_archive(self):
         app = create_app(settings=replace(self.settings, demo=True)); self.addCleanup(app.extensions['jobs'].shutdown)

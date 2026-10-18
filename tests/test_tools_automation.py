@@ -131,7 +131,7 @@ class MoreToolsTests(unittest.TestCase):
     def test_management_forms_and_pwa_routes_render_without_network(self):
         client = self.app.test_client()
         with patch('requests.Session.request', side_effect=AssertionError('implicit network')):
-            for path in ['/ai', '/smart-shelves', '/reading', '/pages', '/pages/trash', '/completion', '/komga-sync', '/automation', '/manifest.webmanifest', '/sw.js', '/offline']:
+            for path in ['/ai', '/smart-shelves', '/pages', '/pages/trash', '/moves', '/komga-sync', '/automation', '/manifest.webmanifest', '/sw.js', '/offline']:
                 with self.subTest(path=path):
                     self.assertEqual(client.get(path).status_code, 200)
         self.assertEqual(client.get('/manifest.webmanifest').json['start_url'], '/')

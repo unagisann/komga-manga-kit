@@ -11,12 +11,11 @@
 ('tools.discovery','漫画の発見','紹介記事・売上と所持作品の照合。'),
 ('tools.rankings','ランキング','次にくるマンガ大賞の年・部門別、全年更新と所持照合。'),
 ('maintenance.shelves','スマート本棚','アニメ・受賞・新刊のCollection、完結抽選Read List、同期前の確認と復元。'),
-('maintenance.completion','完結移動・Komga反映','完結作品の移動と、作品情報・タグ・著者・連載状態の反映。'),
+('maintenance.moves','書籍移動・Komga反映','整理ルールどおりの場所への移動と、作品情報・タグ・著者・連載状態の反映。'),
 ('maintenance.page_books','表紙・ページ修正','表紙・順序・削除、確認状態、バックアップ・履歴・ゴミ箱。'),
 ('maintenance.ai','AI補助','読み・あらすじ・読者層、根拠・モデル選択、確認・編集・保存と復元。'),
-('tools.reading','読書状況','本人のAPIキーでアカウント別に集計。巻の進捗・しおり。'),
 ('maintenance.automation','自動更新・取り込み後処理','時刻とステップ、今すぐ実行、ノーマライズ後の補完、途中からの再開。'),
 ('maintenance.settings','接続・情報源・認証情報','接続先・取得元・AI・アカウント・認証情報の登録と診断。')
 ] %}<a class="panel management-card" href="{{ url_for(endpoint) }}"><h2>{{ title }}</h2><p>{{ description }}</p><span class="text-link">確認する {{ ui.icon('arrow',16) }}</span></a>{% endfor %}</section>
-<section class="panel section"><h2>残る差と未検証の範囲</h2><ul><li>Komga連携中の、ページ数が変わる削除の既読位置移行。</li><li>完結移動と情報反映は、段階ごとに内容を確認します。</li><li>楽天・AIの認証接続、実作品の照合、Windows実機とPWAの実端末インストール。</li><li>機能の必要性、配置、細かい操作感の見直し。</li></ul><p>詳細はリポジトリの docs/FEATURE_PARITY.md と docs/VALIDATION.md に記録しています。</p></section>
+<section class="panel section"><h2>残る差と未検証の範囲</h2><ul><li>Komga連携中の、ページ数が変わる削除の既読位置移行。</li><li>書籍移動と情報反映は、段階ごとに内容を確認します。</li><li>楽天・AIの認証接続、実作品の照合、Windows実機とPWAの実端末インストール。</li><li>機能の必要性、配置、細かい操作感の見直し。</li></ul><p>詳細はリポジトリの docs/FEATURE_PARITY.md と docs/VALIDATION.md に記録しています。</p></section>
 {% endblock %}

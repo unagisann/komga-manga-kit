@@ -85,21 +85,19 @@ def built_in_features() -> list[Feature]:
                 NavigationItem("新刊", "tools.new_volumes", "square-plus"),
                 NavigationItem("今期アニメ", "tools.anime", "tv"),
                 NavigationItem("ランキング", "tools.rankings", "chart", ("tools.ranking_year",)),
-                NavigationItem("読書状況", "tools.reading", "clock", shown=False),
             ), portal=(
                 PortalLink("discovery", "発見", "tools.discovery", "compass", "紹介記事・楽天Kobo売上・マンバ通信・コミックナタリー"),
                 PortalLink("new_volumes", "新刊チェック", "tools.new_volumes", "square-plus", "所持シリーズの新刊・予約状況（楽天Books＋Kobo）"),
                 PortalLink("anime", "今期のアニメ", "tools.anime", "tv", "放送中アニメの原作を所持判定。持っている作品はすぐ読める"),
                 PortalLink("rankings", "次にくるマンガ大賞", "tools.rankings", "chart", "歴代ランキング（2015〜）を所持状況つきで"),
-                PortalLink("reading", "読書状況", "tools.reading", "clock", "アカウントごとの読みかけ・読了・しおり", shown=False),
             )),
             Feature("maintenance", "接続・情報源", "maintenance.settings", "sliders", maintenance, parent="management", navigation=(
-                NavigationItem("完結移動", "maintenance.completion", "folder"),
+                NavigationItem("書籍移動", "maintenance.moves", "folder", ("maintenance.completion",)),
                 NavigationItem("表紙修正", "maintenance.page_books", "image", ("maintenance.edit_pages", "maintenance.page_trash")),
                 NavigationItem("自動更新", "maintenance.automation", "clock", shown=False),
             ), portal=(
                 PortalLink("pages", "表紙・ページ修正", "maintenance.page_books", "image", "表紙変更・並べ替え・不要ページの削除と復元", shown=False),
-                PortalLink("completion", "完結作品の移動", "maintenance.completion", "folder", "完結した作品の移動先・衝突を確認して整理", shown=False),
+                PortalLink("moves", "書籍移動", "maintenance.moves", "folder", "整理ルールの場所と違う作品を、衝突を確認して移す", shown=False),
                 PortalLink("automation", "自動更新", "maintenance.automation", "clock", "情報源の更新と取り込み後の処理を毎日実行", shown=False),
             )),
             Feature("normalize", "ノーマライズ", "normalize.index", "refresh", normalize, parent="management", navigation=(
@@ -107,7 +105,7 @@ def built_in_features() -> list[Feature]:
             ), portal=(
                 PortalLink("normalize", "追加した漫画を整理", "normalize.index", "refresh", "CBZ化・ページ順・名前と配置をまとめて整える"),)),
             Feature("management", "管理", "management.index", "sliders", management, portal=(
-                PortalLink("management", "管理", "management.index", "sliders", "補完・表紙修正・完結移動・処理履歴・設定"),)),
+                PortalLink("management", "管理", "management.index", "sliders", "補完・表紙修正・書籍移動・処理履歴・設定"),)),
             Feature("metadata", "補完・個別確認", "metadata.index", "tag", metadata, parent="management", portal=(
                 PortalLink("metadata", "作品情報の補完", "metadata.index", "tag", "読み・著者・出版社などの不足情報を取得して確認", shown=False),)),
             Feature("organize", "整理ルール", "organize.index", "folder", organize, parent="management"),

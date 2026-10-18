@@ -123,7 +123,7 @@ def paginate(entries, size=60):
     start = (page - 1) * size
     args = {**(request.view_args or {}),
             **{key: request.args[key] for key in ('q', 'status', 'row', 'state', 'preview', 'provider', 'batch', 'check', 'action',
-                                                 'year', 'category', 'source', 'account', 'author', 'publisher', 'label', 'demographic', 'decade', 'rating', 'sort') if key in request.args}}
+                                                 'year', 'category', 'source', 'bucket', 'author', 'publisher', 'label', 'demographic', 'decade', 'rating', 'sort') if key in request.args}}
     paging = {'page': page, 'pages': pages, 'total': total, 'start': start + 1 if total else 0,
               'end': min(start + size, total),
               'previous': url_for(request.endpoint, **args, page=page - 1) if page > 1 else None,

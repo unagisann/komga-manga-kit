@@ -93,16 +93,55 @@ def ai_action(identifier, action):
     return jsonify(current_app.extensions["ai_assist"].save(identifier, body["confirm"], body.get("fields"), restore=action == "restore"))
 
 
+# Review marks shown with the existing Tools wording: done, skipped (kept as hold) and everything else to do.
+MARK_STATES = {"done": "done", "hold": "skip"}
+
+
 @maintenance.get("/pages")
 def page_books():
+    """The existing Tools cover list: screening groups, review state, search and 100 books a page."""
+    from .config import ConfigError
+    from .covers import BUCKETS
     from .japanese import search_key
     from .web import paginate
+    screening = current_app.extensions["covers"].results()
+    verdicts = screening["books"]
+    marks = {key.removeprefix("pages:mark:"): value["data"].get("status", "unmarked")
+             for key, value in current_app.extensions["state"].cached_prefix("pages:mark:").items()}
+    rows = [{"series": row, "book": book, "verdict": verdicts.get(book["id"], {}),
+             "state": MARK_STATES.get(marks.get(book["id"]), "todo")}
+            for row in current_app.extensions["inventory"].cached()["series"] for book in row["books"] if book.get("path")]
+    counts = {key: sum(item["verdict"].get("bucket") == key for item in rows) for key in BUCKETS}
+    bucket = request.args.get("bucket") or next((key for key in BUCKETS if counts[key]), "lib")
+    status = request.args.get("status") or ("all" if bucket == "lib" else "todo")
+    if bucket not in {*BUCKETS, "lib"} or status not in {"todo", "done", "skip", "all"}:
+        raise ConfigError("表紙の一覧の絞り込みを確認してください。")
     query = request.args.get("q", "")[:200]
-    rows = [{"series": row, "book": book} for row in current_app.extensions["inventory"].cached()["series"]
-            if search_key(query) in search_key(row["title"] + row["author"]) for book in row["books"] if book.get("path")]
-    rows, pagination = paginate(rows, 40)
-    return render_template("page_books.html", rows=rows, pagination=pagination, query=query,
-                           marks=current_app.extensions["state"].cached_prefix("pages:mark:"))
+    key = search_key(query)
+    flagged = [item for item in rows if item["verdict"].get("bucket") in BUCKETS]
+    selected = [item for item in rows
+                if (bucket == "lib" or item["verdict"].get("bucket") == bucket)
+                and (status == "all" or item["state"] == status)
+                and (not key or key in search_key(" ".join([item["series"]["title"], item["series"]["author"],
+                                                               str(item["book"].get("volume") or ""), item["book"]["path"]])))]
+    selected, pagination = paginate(selected, 100)
+
+    def link(**changes):
+        values = {"bucket": bucket, "status": status, "q": query, **changes}
+        return url_for("maintenance.page_books", **{name: value for name, value in values.items() if value})
+    return render_template("page_books.html", rows=selected, pagination=pagination, query=query, bucket=bucket, status=status, link=link,
+                           buckets=BUCKETS, counts=counts, screened=screening.get("updated"), demo=screening.get("demo"),
+                           stats={"books": len(rows), "flagged": len(flagged),
+                                  "done": sum(item["state"] == "done" for item in flagged),
+                                  "skip": sum(item["state"] == "skip" for item in flagged)})
+
+
+@maintenance.post("/api/tools/covers/screen")
+def screen_covers():
+    require_admin_access()
+    body = body_with_keys({"force"})
+    job = current_app.extensions["covers"].submit(force=body.get("force", False))
+    return jsonify(current_app.extensions["state"].job(job)), 202
 
 
 @maintenance.get("/pages/<book_id>")
@@ -120,7 +159,16 @@ def edit_pages(book_id):
         raise ConfigError("この本のページ修正を選んでください。")
     review = editor.review(book_id) if operation is None or operation["status"] == "planned" else {
         "book": {"id": book_id, "volume": record["data"].get("volume", "")}, "pages": [], "fingerprint": ""}
-    return render_template("page_editor.html", **review, operation=operation)
+    # Return to the same filtered list; only list addresses are accepted.
+    back = request.args.get("back", "")
+    if not (back == "/pages" or back.startswith("/pages?")):
+        back = url_for("maintenance.page_books")
+    series = next((row for row in current_app.extensions["inventory"].cached()["series"]
+                   if any(book["id"] == book_id for book in row["books"])), None)
+    mark = current_app.extensions["state"].cached("pages:mark:" + book_id)
+    return render_template("page_editor.html", **review, operation=operation, back=back, series=series,
+                           verdict=current_app.extensions["covers"].results()["books"].get(book_id, {}),
+                           mark=mark["data"].get("status", "unmarked") if mark else "unmarked")
 
 
 @maintenance.post("/api/tools/pages/<book_id>/preview")
@@ -203,12 +251,31 @@ def automation_run():
     return jsonify(current_app.extensions["state"].job(job)), 202
 
 
-@maintenance.get("/completion")
-def completion():
+@maintenance.get("/moves")
+def moves():
+    """Book moves: series that are not where the organize rules place them, filtered by status and title."""
+    from .config import ConfigError
+    from .japanese import search_key
+    from .web import paginate
     service = current_app.extensions["maintenance_ops"]
     identifier = request.args.get("plan")
-    return render_template("maintenance_operations.html", kind="completion", rows=service.candidates(),
-                           operation=service.inspect(identifier) if identifier else None)
+    rows = service.candidates()
+    status, query = request.args.get("status", ""), request.args.get("q", "")[:200]
+    if status not in {"", "ongoing", "completed", "unknown"}:
+        raise ConfigError("作品の状態を選んでください。")
+    counts = {key: sum(row["status"] == key for row in rows) for key in ("ongoing", "completed", "unknown")}
+    key = search_key(query)
+    selected = [row for row in rows if (not status or row["status"] == status)
+                and (not key or key in search_key(" ".join([row["title"], row["author"], row["source"]])))]
+    selected, pagination = paginate(selected, 100)
+    return render_template("moves.html", rows=selected, pagination=pagination, total=len(rows), counts=counts,
+                           status=status, query=query, operation=service.inspect(identifier) if identifier else None)
+
+
+@maintenance.get("/completion")
+def completion():
+    # The completed-series move became the general book move.
+    return redirect(url_for("maintenance.moves", **request.args))
 
 
 @maintenance.get("/komga-sync")

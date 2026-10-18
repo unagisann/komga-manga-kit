@@ -73,7 +73,7 @@ v0.2で機能が増えたら、`web.py` の各Blueprintを `features/` 配下へ
 ## メタデータ取得元を追加する
 
 主メニューと蔵書検索は共通ヘッダーに集約し、本文上のポータル・管理サブメニューは置かない。
-`Feature.navigation` で同じBlueprint内の発見・新刊・アニメ・ランキングや完結移動・表紙修正を登録する。
+`Feature.navigation` で同じBlueprint内の発見・新刊・アニメ・ランキングや書籍移動・表紙修正を登録する。
 `NavigationItem.related_endpoints` で詳細画面の選択表示を親の項目へ引き継ぐ。個別項目がない画面では `Feature.parent` の選択表示を使う。
 ノーマライズ・補完・整理ルール・手動修正・処理履歴・設定・ロードマップは `/manage` の管理入口から開く。
 `/` はポータルの入口をすぐ描画し、蔵書集計・各4作品の一覧と完結作品は `/api/portal/library` から後で読み込む。
