@@ -7,6 +7,7 @@ from flask import Blueprint, Response, current_app, jsonify, render_template, re
 from .config import ConfigError
 from .feeds import CATEGORIES, DISCOVERY_FEEDS, season
 from .japanese import search_key
+from .komga import KomgaError
 from .web import body_with_keys, paginate, require_admin_access
 
 tools = Blueprint("tools", __name__)
@@ -120,6 +121,25 @@ def book_page(book_id, page):
     else:
         data, mime = service("book_pages").image(book_id, page)
     return Response(data, mimetype=mime)
+
+
+@tools.get("/api/tools/books/<book_id>/thumbnail")
+def book_thumbnail(book_id):
+    # As in the existing Tools: prefer Komga's small thumbnail and let the browser keep covers for a day.
+    # Callers add the book size to the URL, so a changed archive gets a new address.
+    if current_app.config["MANGA_KIT"].demo:
+        from flask import redirect
+        return redirect(url_for("static", filename="mark.svg"))
+    book = service("book_pages").find(book_id, local=False)
+    image = None
+    if book.get("komga_id"):
+        try:
+            image = service("komga").thumbnail(book["komga_id"])
+        except KomgaError:
+            if not book.get("path"):
+                raise
+    data, mime = image or service("book_pages").image(book_id, 1)
+    return Response(data, mimetype=mime, headers={"Cache-Control": "private, max-age=86400"})
 
 
 @tools.post("/api/tools/series/<series_id>/facts")

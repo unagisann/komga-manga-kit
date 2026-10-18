@@ -126,11 +126,11 @@ def portal_library():
     demo = configuration().demo
 
     def cover_url(row, book=None):
-        # The first page is the cover. Demo books have no images, so the template draws one.
+        # Demo books have no images, so the template draws a cover instead.
         book = book or next(iter((row or {}).get("books") or []), None)
         if demo or not book or not (book.get("path") or book.get("komga_id")):
             return None
-        return url_for("tools.book_page", book_id=book["id"], page=1)
+        return url_for("tools.book_thumbnail", book_id=book["id"], v=book.get("size") or None)
 
     def local_time(value):
         try:

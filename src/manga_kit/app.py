@@ -179,7 +179,11 @@ def create_app(config_path=None, *, settings=None, features=None):
         response.headers["Content-Security-Policy"] = ("default-src 'self'; script-src 'self'; style-src 'self'; "
                                                       "img-src 'self' data: https://s4.anilist.co https://img.tsugimanga.jp https://res.booklive.jp https://thumbnail.image.rakuten.co.jp; object-src 'none'; base-uri 'self'; "
                                                       "frame-ancestors 'none'; form-action 'self'")
-        response.headers["Cache-Control"] = "public, max-age=3600" if request.path.startswith("/static/") else "no-store"
+        if request.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "public, max-age=3600"
+        elif "Cache-Control" not in response.headers:
+            # Only views that opt in (book covers) may be cached; everything else can hold private data.
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     return app

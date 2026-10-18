@@ -56,24 +56,32 @@ class KomgaClient:
 
     def image(self, identifier, page):
         from urllib.parse import quote
+        return self._image("/api/v1/books/" + quote(identifier, safe="") + "/pages/" + str(page),
+                           {"zero_based": "false"}, "ページ画像")
+
+    def thumbnail(self, identifier):
+        """Komga's generated cover, far smaller than the first page itself."""
+        from urllib.parse import quote
+        return self._image("/api/v1/books/" + quote(identifier, safe="") + "/thumbnail", {}, "表紙画像")
+
+    def _image(self, endpoint, params, label):
         if not self.settings.komga_url or not secret(self.settings, self.settings.api_key_env):
             raise KomgaError("Komgaの接続先とAPIキーを設定してください。")
-        endpoint = "/api/v1/books/" + quote(identifier, safe="") + "/pages/" + str(page)
         try:
-            with self.session.get(self.settings.komga_url + endpoint, params={"zero_based": "false"},
+            with self.session.get(self.settings.komga_url + endpoint, params=params,
                     headers={"X-API-Key": secret(self.settings, self.settings.api_key_env)},
                     timeout=self.settings.timeout_seconds, stream=True, allow_redirects=False) as response:
                 mime = response.headers.get("Content-Type", "").split(";")[0]
                 if response.status_code != 200 or mime not in {"image/jpeg", "image/png", "image/gif", "image/webp", "image/avif", "image/bmp"}:
-                    raise KomgaError("Komgaのページ画像を確認できませんでした。画像形式と権限を確認してください。")
+                    raise KomgaError(f"Komgaの{label}を確認できませんでした。画像形式と権限を確認してください。")
                 content = bytearray()
                 for block in response.iter_content(65536):
                     content.extend(block)
                     if len(content) > 25 * 1024 * 1024:
-                        raise KomgaError("ページ画像がプレビューの上限を超えています。")
+                        raise KomgaError(f"{label}がプレビューの上限を超えています。")
                 return bytes(content), mime
         except requests.RequestException:
-            raise KomgaError("Komgaのページ画像を取得できませんでした。") from None
+            raise KomgaError(f"Komgaの{label}を取得できませんでした。") from None
 
     def series(self, page=0, size=50):
         result = self.get("/api/v1/series", page=page, size=size)

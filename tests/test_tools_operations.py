@@ -40,6 +40,27 @@ class ToolFixture:
 
 
 class ToolOperationsTests(ToolFixture, unittest.TestCase):
+    def test_book_thumbnail_prefers_komga_and_lets_the_browser_keep_covers(self):
+        from manga_kit.komga import KomgaError
+        client = self.app.test_client()
+        response = client.get('/api/tools/books/' + self.book_id + '/thumbnail')
+        self.assertEqual((response.status_code, response.data), (200, bytes([1]) * 32))
+        self.assertEqual(response.headers['Cache-Control'], 'private, max-age=86400')
+        self.assertEqual(client.get('/api/tools/books/' + self.book_id + '/page/1').headers['Cache-Control'], 'no-store')
+        self.assertIn('/api/tools/books/%s/thumbnail?v=%d' % (self.book_id, self.book.stat().st_size),
+                      client.get('/shelf/series/' + self.row['id']).get_data(as_text=True))
+        komga = self.app.extensions['komga'] = Mock()
+        managed = {**self.row['books'][0], 'komga_id': 'K1'}
+        with patch.object(self.app.extensions['book_pages'], 'find', return_value=managed):
+            komga.thumbnail.return_value = (b'small', 'image/jpeg')
+            self.assertEqual(client.get('/api/tools/books/' + self.book_id + '/thumbnail').data, b'small')
+            komga.thumbnail.assert_called_with('K1')
+            komga.thumbnail.side_effect = KomgaError('unavailable')
+            self.assertEqual(client.get('/api/tools/books/' + self.book_id + '/thumbnail').data, bytes([1]) * 32)
+            managed['path'] = None
+            failed = client.get('/api/tools/books/' + self.book_id + '/thumbnail')
+            self.assertEqual((failed.status_code, failed.headers['Cache-Control']), (502, 'no-store'))
+
     def test_page_reorder_delete_relinks_xml_and_restores_exact_archive(self):
         editor = self.app.extensions['page_editor']
         review = editor.review(self.book_id)
