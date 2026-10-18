@@ -3,52 +3,102 @@
 A self-hosted foundation for Japanese manga organization and Komga integration.
 The UI uses warm paper tones, a clay accent, responsive cards, and light/dark themes.
 
-**Status: 0.1.0.dev5, the fourth v0.1 milestone.** This is not a production v0.1 release.
+The main workflow is **add books to a series folder → check changes → normalize**.
+The Normalize page combines file/folder naming, CBZ conversion, page ordering, and backup-based restore.
+See the [normalization guide](docs/NORMALIZATION.md) (Japanese) for setup and limitations.
+
+**Status: 0.1.0rc1, the first release candidate.** Required features and release-preparation checks are complete; publication is pending.
 The interface is currently Japanese. This document provides English setup instructions.
 No manga acquisition or download functionality is included.
 
+## Scope of the first 0.1.0 release
+
+The first release covers library scanning, organization, reviewed metadata enrichment, and confirmed CLI updates to Komga with undo.
+Per-book author and role updates are implemented. Clean installation, dev8 upgrades, backup/recovery, and distribution checks
+have been exercised for this candidate. Unreleased changes add opt-in web normalization and restore.
+Unreleased work also adds Kobo/MangaUpdates, new releases, anime/discovery/awards, shelves, AI review, per-user reading views, page editing and scheduled post-import workflows. See the [feature coverage](docs/FEATURE_PARITY.md) and [Tools guide](docs/TOOLS.md) for implemented behavior and verification limits. The [roadmap](docs/ROADMAP.md) (Japanese) records the remaining work
+and acceptance criteria. Planned features are separate from the implemented features below.
+
+Managed archive rebuilding is verified on Komga 1.29.1 using byte-preserving moves followed by rebuilding at the same path, with book IDs and reading dates checked. Page-count-changing edits in a managed library remain unsupported.
+
 ## Available
+
+The shared header links to the portal, library, discovery, new volumes, seasonal anime, rankings, completion moves, cover editing, and management, with library search alongside. The portal opens first with library search and completed-series browsing.
+Its organization shortcut leads to normalization. Management groups normalization, enrichment, manual corrections,
+organization rules, history, settings, and the roadmap. Enrichment fills missing fields after review.
+
+Organization previews show saved results and their check time without recalculating on each visit. Check the current layout on demand,
+review issues first, and search or browse all results in pages of 20. Unchanged archive metadata is reused during preview updates;
+collision checks still cover all books, and CLI execution reviews keep their full validation.
 
 - Demo dashboard, library search, status and Japanese kana-row filters
 - Read-only scanning of CBZ, ZIP, CBR, RAR, 7z, and EPUB locations
-- ComicInfo.xml reading for CBZ/ZIP and per-series `series.json` overrides
+- ComicInfo.xml reading for ZIP/CBZ, RAR/CBR, and 7z, EPUB volume metadata, and per-series `series.json` overrides
 - Configurable status folders, series names, book names, and folder hierarchies
 - Organization previews, duplicate-target detection, and existing-file checks
 - Opt-in CLI moves with confirmed plans, full backups, and restore without overwriting existing files
 - Durable backups and destination names before source removal, previous operation checkpoints, and recovery after process termination
-- Completed-folder organization with verified Komga 1.29.0 reading-progress and locked-metadata preservation
+- Completed-folder organization with verified Komga 1.29.0 / 1.29.1 reading-progress and locked-metadata preservation
 - CBZ copies from ZIP/CBZ, RAR/CBR, and 7z with normalized page names/order and preserved ComicInfo.xml
 - Background scan/preview jobs with persistent progress, results, and operation history
+- Persistent metadata caching for unchanged archives, 60-series pages, and browsing during explicit rescans
 - Manual metadata and reading edits with diff review, conflict detection, and reset
 - Rakuten Books bibliographic search, representative-volume links, field-by-field review, and saved source/timestamp information
+- Candidate comparison by title, reviewed aliases, authors, publisher, and explicit edition notes; separate imprint display and conservative readership proposals
+- AniList manga searches for tags/genres, independent links for both sources, manual classification edits, and library search
+- Confirmed CLI series-metadata updates to Komga 1.29.0 / 1.29.1 with per-field locks, saved original values, and conflict-aware undo
+- Explicit CLI completion-tag/status updates with undo, retaining unrelated tags and hiatus/abandoned statuses
+- Per-book author/role updates and undo, selected books, merging by default, and explicit list/lock replacement
+- Library-wide batch updates of series metadata, completion, and per-book authors with reverse-order undo; fills empty Komga values by default and checks archives by file attributes instead of re-reading them
+- Batch import of readings from Komga's sort titles, never replacing readings already set, with a one-step undo
 - Komga connection checks and read-only library/series API calls
 - Configurable Komga-to-local path mappings and explicit series matching
 - CLI, Docker Compose, tests, and original fictitious sample CBZ generation
 
-Default settings and the web interface provide organization previews. CLI execution requires `execution.enabled: true`.
+Default settings provide previews. CLI execution requires `execution.enabled: true`.
+Web normalization additionally requires `execution.web_enabled: true`, reviewed changes, and a local or authenticated session.
 Moves support POSIX, one filesystem, and complete series only. All selected archives and `series.json` are backed up first.
 Persistence ordering and recovery limits are documented in [the durability guide](docs/DURABILITY.md) (Japanese).
 Move integration explicitly requests Komga scans. CBZ conversion copies to a separate output root and retains originals.
-Replacing original archives, migrating progress to converted copies, and writing external metadata to Komga remain unimplemented.
+Web normalization can replace archives with verified CBZs and backups before they are registered in Komga.
+Komga 1.29.1 supports rebuilding at the same path after hash-preserving moves. Book IDs, reading progress and reading dates are verified before completion and during restore. Arbitrary migration to another library and page-count-changing edits are unsupported.
+Komga series metadata can be updated separately through `prepare-metadata`, `execute`, and `restore`.
+The Komga series is resolved from the path mapping, so `--komga-series` is optional.
+`prepare-komga-batch --all` plans many series at once, and `prepare-reading-import --all` imports readings from Komga sort titles.
+Choose both local/Komga series IDs and explicit fields; tags/genres merge by default, while replacing lists or locked values needs explicit flags.
+See [the metadata update guide](docs/KOMGA_METADATA.md) and the separate [author/role guide](docs/AUTHORS.md) (Japanese).
+Author plans support up to 50 books per series. Archives and current reading progress are retained.
 Manual edits are stored in application state and used by search, kana filters, and organization previews.
 Reviewed bibliographic fields are saved in application state. Demo mode uses fictitious search results without network access.
 Live Rakuten Books searches require your own application ID and access key; live authentication has not yet been verified.
 See [bibliographic search and enrichment](docs/METADATA_SOURCES.md) (Japanese) for setup and limitations.
-Additional providers such as AniList, new-volume checks, automatic completion detection, and portal features are planned.
-Cover artwork currently uses generic visual placeholders rather than extracted archive covers.
+AniList classification searches require `anilist.enabled: true`; no API key is needed. Demo mode uses fictitious results.
+Reviewed genres/tags are saved locally alongside Rakuten links. Spoiler-marked and unknown-spoiler tags are excluded.
+An empty-result query using a fictitious search term verified public API connectivity; real-title matching remains unverified.
+Additional portal tools, new-volume checks, AI review, completion management, page editing and scheduling are implemented as unreleased work. Covers can be read from local archives or Komga. See [feature coverage](docs/FEATURE_PARITY.md) for remaining gaps and external-service verification limits.
 
 ## Run
 
-Python 3.11 or newer:
+Linux, Python 3.11 or newer (tested on 3.11 / 3.13), and system libarchive:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -e .
+.venv/bin/python -m pip install -r requirements.lock
+.venv/bin/python -m pip install --no-deps .
 .venv/bin/manga-kit serve
 ```
 
 Open <http://127.0.0.1:5080>. Demo mode requires no keys or services.
 The CLI server is intended for development; the container runs Gunicorn.
+Use `-e` for editable development installs. Runtime versions are pinned for Linux, without artifact hashes.
+Full upstream license/NOTICE texts are bundled; see [third-party notices](THIRD_PARTY_NOTICES.md).
+
+See [installation, upgrade, backup and recovery](docs/OPERATIONS.md), [tested environments and limitations](docs/SUPPORT.md),
+and [release notes](docs/RELEASE_NOTES.md) (Japanese). Before upgrading, stop the app and back up the complete state directory,
+configuration, and library together. Keep the same application-visible absolute library path and state volume.
+Recover into empty storage, preserve ownership/modes, and verify edits, sources, history, and book counts before resuming.
+After physically recreating a library root, old operation plans remain inspectable but must be replaced by newly prepared plans.
+The candidate includes a wheel and source distribution with SHA-256 manifests; `scripts/build_release.py` builds and checks them without publishing.
 
 ```bash
 docker compose up --build -d
@@ -67,7 +117,8 @@ Rules entered in the UI are used for previews only, not saved.
 Use `data.root` or `MANGA_KIT_DATA_ROOT` for private application state (default: `var/state` relative to the config).
 This location must not overlap the manga library. Stop the application and back up the entire state directory.
 
-Select a series on the Metadata page to edit its title, author, reading, status, summary, or publisher.
+Use Automatic enrichment to collect and review missing-field proposals. For information that cannot be retrieved or needs correction,
+select a series under Management → Manual corrections to edit its title, author, reading, status, summary, or publisher.
 Review the diff before saving. Kana readings are normalized to hiragana. Reset restores scanned metadata.
 Edits survive restart and do not modify archives, sidecars, or Komga. Concurrent edits or changed source metadata require a new review.
 
@@ -126,12 +177,29 @@ Changed destinations, conflicting original paths, or corrupt backups stop restor
 Stop other writers and readers during execution/restore; incomplete operations are recovered explicitly with `restore`.
 After a completed move, restore preserves reading progress recorded since that move.
 
-For Komga integration, use 1.29.0 with an administrator API key and an exact library-root path mapping.
+For Komga integration, use 1.29.0 or 1.29.1 with an administrator API key and an exact library-root path mapping.
 Enable file hashing and complete analysis/hashing before preparing. Disable startup/periodic scans, automatic trash
 emptying, CBZ conversion, and extension repair. Stale hashes, duplicate content anywhere on the server, or matching
 trash entries prevent execution. Book/series IDs and some internal creation timestamps change after moves;
 external tools that retain these IDs are not covered by the tests.
 See the [Japanese organization guide](docs/ORGANIZATION.md) for detailed recovery and opt-in integration testing.
+
+## Sync completion information
+
+Mark a series as completed in this tool before planning its Komga update:
+
+```bash
+.venv/bin/manga-kit --config /path/to/execute.yaml prepare-completion --series LOCAL_SERIES_ID
+# Review plan.changes, including values and locks.
+.venv/bin/manga-kit --config /path/to/execute.yaml execute OPERATION_ID --confirm DIGEST
+.venv/bin/manga-kit --config /path/to/execute.yaml restore OPERATION_ID --confirm DIGEST
+```
+
+The default tags are `連載中` (removed) and `完結` (added); customize them with `--ongoing-tag` and `--completed-tag`.
+Other tags remain. `ONGOING` becomes `ENDED` and is locked; existing `ENDED`, `HIATUS`, and `ABANDONED` values and locks remain.
+Changing a locked value requires `--replace-locked`. This is a separate CLI operation and does not run when saving web edits.
+When also moving a series, move first and plan the update using its new IDs. Undo the metadata update before undoing the move.
+See the [Japanese completion guide](docs/COMPLETION.md) for conditions and recovery behavior.
 
 ## Generate normalized CBZ copies
 
@@ -153,6 +221,7 @@ EPUB, encrypted or split archives, links, duplicate names, unsafe paths, inconsi
 and hidden image entries are outside the conversion scope. Limits per archive: 10,000 entries, 256 MiB per file,
 4 GiB expanded data, 256 KiB of ComicInfo.xml, and a 16 MiB ZIP central directory.
 Images sort naturally by their full internal paths and become sequential names such as `0001.png`.
+Use `--page-order lexicographic-path` to retain KomgaTool's lexical page-order policy.
 Images are copied without re-encoding; ComicInfo.xml is moved to the archive root with its bytes intact.
 Other file bytes and ZIP comments are preserved. Empty directory entries and archive entry timestamps are not retained.
 Outputs use ZIP stored entries, so they can be larger than compressed inputs. Staging and backups require additional space.
@@ -167,7 +236,7 @@ their reading state remains a later milestone. See the [Japanese conversion guid
 
 The client uses `X-API-Key`, `GET /api/v1/libraries`, and `GET /api/v1/series`, following the
 [official Komga 1.29.0 OpenAPI](https://github.com/gotson/komga/blob/1.29.0/komga/docs/openapi.json).
-An isolated ARM64 Komga 1.29.0 server was tested with fictitious archives: connection/matching,
+Isolated ARM64 Komga 1.29.0 and 1.29.1 servers were tested with fictitious archives (1.29.1 only changes the web UI): connection/matching,
 renaming, completed-folder moves, and restore including deleted-target backup recovery.
 Two users' unread/partial/completed states, reading dates, latest progress, and locked series metadata were checked.
 Other versions, production-scale libraries, and external tools referencing Komga IDs remain unverified.
