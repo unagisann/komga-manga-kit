@@ -2,6 +2,7 @@ from base64 import b64encode
 from dataclasses import replace
 import os
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -77,12 +78,47 @@ class ApplicationTests(unittest.TestCase):
         self.assertNotIn('data-slot', reroll)
         self.assertNotIn('<img src=x', reroll)
 
-    def test_library_filters_by_kana_status_and_title(self):
-        response = self.client.get('/library?q=ｶﾓﾒ&status=completed&row=か')
+    def test_library_filters_by_status_and_width_insensitive_title(self):
+        response = self.client.get('/library?q=ｶﾓﾒ&status=completed')
         html = response.get_data(as_text=True)
         self.assertIn('かもめ便り', html)
         self.assertNotIn('雨あがりの喫茶室', html)
+        self.assertIn('1 件中 1 件を表示', html)
         self.assertEqual(self.client.get('/api/library').json['stats']['books'], 22)
+
+    def test_library_browser_counts_facets_over_all_series_and_filters_like_the_existing_tools(self):
+        series = [Series(f'folder{i}', f'作品{i:02}', 'Ａ作家×Ｂ作画' if i < 3 else f'作家{i}',
+                         status='completed' if i % 2 else 'ongoing',
+                         books=[Book(f'folder{i}/{n}.cbz', str(n)) for n in range(1, i + 2)]) for i in range(6)]
+        for i, item in enumerate(series):
+            item.publisher = '甲出版' if i < 4 else '乙出版'
+            item.genres = ['少年'] if i < 2 else ['青年'] if i < 5 else []
+        series[5].summary = '<b>あらすじ</b>'
+        with patch.object(self.app.extensions['library'], 'scan', return_value=ScanResult(series)):
+            html = self.client.get('/library?status=completed').get_data(as_text=True)
+            self.assertIn('蔵書 <strong>6</strong> シリーズ（メタデータ取得済み 6）', html)
+            for chip in ('少年 <span class="count">2</span>', '青年 <span class="count">3</span>', '不明 <span class="count">1</span>'):
+                self.assertIn(chip, html)
+            self.assertIn('<option value="A作家">A作家 (3)</option>', html)
+            self.assertNotIn('value="作家3"', html)
+            self.assertIn('作者: すべて（全5人）', html)
+            self.assertIn('甲出版 (4)', html)
+            self.assertRegex(html, r'href="/library\?status=completed&amp;demographic=%E5%B0%91%E5%B9%B4"')
+            self.assertIn('&lt;b&gt;あらすじ', html)
+            self.assertNotIn('<b>あらすじ', html)
+            for query, expected in [('demographic=青年&status=completed', ['作品03']), ('demographic=不明', ['作品05']),
+                                    ('author=A作家&status=ongoing', ['作品00', '作品02']), ('publisher=乙出版', ['作品04', '作品05'])]:
+                with self.subTest(query=query):
+                    results = self.client.get('/api/library/results?' + query)
+                    self.assertEqual(results.mimetype, 'text/html')
+                    text = results.get_data(as_text=True)
+                    self.assertNotIn('<html', text)
+                    self.assertEqual(re.findall(r'class="cap">(?:<a [^>]*>)?(作品\d\d)', text), expected)
+            ordered = self.client.get('/api/library/results?sort=books').get_data(as_text=True)
+            self.assertLess(ordered.index('作品05'), ordered.index('作品00'))
+            for query in ('status=unknown', 'sort=name', 'decade=abc', 'demographic=女性', 'page=0'):
+                with self.subTest(query=query):
+                    self.assertEqual(self.client.get('/library?' + query).status_code, 400)
 
     def test_preview_uses_overrides_without_persisting(self):
         response = self.client.post('/api/organize/preview', json={'layout': {'completed': '{series}'}})

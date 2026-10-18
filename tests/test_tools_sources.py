@@ -95,9 +95,11 @@ class ToolsTests(unittest.TestCase):
         value = {'revision': 0, 'label': '架空レーベル', 'magazine': '架空誌', 'demographic': '青年', 'original_year': 1998, 'rating': 4.5}
         self.assertEqual(self.client.post(url, json=value).status_code, 200)
         self.assertEqual(self.client.post(url, json=value).status_code, 409)
-        html = self.client.get('/library?label=架空レーベル&decade=1990&rating=4').get_data(as_text=True)
+        html = self.client.get('/library?demographic=青年&decade=1990').get_data(as_text=True)
         self.assertIn(row['title'], html)
-        self.assertIn(' / 1 作品', html)
+        self.assertIn('1 件中 1 件を表示', html)
+        self.assertIn('1990年代 <span class="count">1</span>', html)
+        self.assertIn('title="評価 4.5"', html)
         for invalid in [True, [], '1998', 9999]:
             self.assertEqual(self.client.post(url, json={**value, 'revision': 1, 'original_year': invalid}).status_code, 400)
 

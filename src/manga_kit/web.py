@@ -9,7 +9,7 @@ from werkzeug.exceptions import NotFound
 from .config import ConfigError
 from .credentials import secret
 from .auto_enrichment import PROVIDER_FIELDS, missing_fields
-from .japanese import ROWS, search_key
+from .japanese import search_key
 from .organizer import plan_organization
 from .paths import map_komga_path
 
@@ -123,14 +123,9 @@ def portal_library():
     from zoneinfo import ZoneInfo
     from .inventory import number
     inventory = current_app.extensions["inventory"]
-    demo = configuration().demo
 
     def cover_url(row, book=None):
-        # Demo books have no images, so the template draws a cover instead.
-        book = book or next(iter((row or {}).get("books") or []), None)
-        if demo or not book or not (book.get("path") or book.get("komga_id")):
-            return None
-        return url_for("tools.book_thumbnail", book_id=book["id"], v=book.get("size") or None)
+        return book_cover(book or next(iter((row or {}).get("books") or []), None))
 
     def local_time(value):
         try:
@@ -173,50 +168,117 @@ def portal_library():
                            picks=picks[:6], **common)
 
 
+DEMOGRAPHICS = ("少年", "少女", "青年", "レディース")
+LIBRARY_PAGE = 60
+LIBRARY_SORTS = {"": "名前順", "rating": "評価が高い順", "new": "新しい順", "old": "古い順", "books": "巻数が多い順", "random": "ランダム"}
+
+
+def book_cover(book):
+    """Thumbnail address for a book, or None when the template draws a cover instead (demo books have no images)."""
+    if configuration().demo or not book or not (book.get("path") or book.get("komga_id")):
+        return None
+    return url_for("tools.book_thumbnail", book_id=book["id"], v=book.get("size") or None)
+
+
+def library_view():
+    """The existing Tools library browser: readership, status, decade, author, publisher and sort, with
+    facets counted over the whole library so choices never disappear, and 60 more series per page."""
+    import hashlib
+    from collections import Counter
+    from datetime import date
+    from .authors import author_candidates
+    args = request.args
+    query = args.get("q", "")[:200]
+    status, demographic, decade, author, publisher, sorting = (args.get(key, "") for key in
+                                                              ("status", "demographic", "decade", "author", "publisher", "sort"))
+    if (status not in {"", "completed", "ongoing"} or demographic not in {"", *DEMOGRAPHICS, "不明"}
+            or sorting not in LIBRARY_SORTS or decade and not (decade.isdigit() and len(decade) == 4)):
+        raise ConfigError("蔵書の絞り込み条件を確認してください。")
+    try:
+        page = int(args.get("page", "1"))
+    except ValueError:
+        raise ConfigError("ページは1以上の整数で指定してください。") from None
+    if page < 1:
+        raise ConfigError("ページは1以上の整数で指定してください。")
+    result = scan()
+    inventory = current_app.extensions["inventory"]
+    details = {item["id"]: item for item in inventory.cached()["series"]}
+    ai_summaries = {(item["series_id"], item["fields"]["summary"]) for item in current_app.extensions["ai_assist"].proposals()
+                    if item["fields"].get("summary")}
+    cards = []
+    for series in result.series:
+        row = details.get(series.id)
+        facts = (row or {}).get("facts", {})
+        year, rating = facts.get("original_year"), facts.get("rating")
+        try:
+            authors = [item["name"] for item in author_candidates(series.author)] if series.author else []
+        except ConfigError:
+            authors = [series.author]
+        read = inventory.read_url(row) if row else ""
+        tooltip = series.summary[:300] + ("\n\n（AI生成のあらすじ）" if (series.id, series.summary) in ai_summaries else "")
+        cards.append({"series": series, "authors": authors, "tooltip": tooltip if series.summary else "",
+                      "demographic": facts.get("demographic") if facts.get("demographic") in DEMOGRAPHICS
+                      else next((genre for genre in series.genres if genre in DEMOGRAPHICS), ""),
+                      "decade": str(year // 10 * 10) if type(year) is int else "", "year": year if type(year) is int else None,
+                      "rating": rating if type(rating) in {int, float} and rating > 0 else None,
+                      "cover": book_cover(next(iter(row["books"]), None)) if row else None, "detail": row is not None,
+                      # Without Komga the read link would only search this page again.
+                      "read": read if read and not read.startswith("/library") else ""})
+    key = search_key(query)
+    matched = [card for card in cards
+               if (not demographic or card["demographic"] == ("" if demographic == "不明" else demographic))
+               and (not decade or card["decade"] == decade)
+               and (not author or author in card["authors"])
+               and (not publisher or card["series"].publisher == publisher)
+               and (status != "completed" or card["series"].status == "completed")
+               and (status != "ongoing" or card["series"].status != "completed")
+               and (not key or key in search_key(" ".join([card["series"].title, card["series"].reading, card["series"].author,
+                                                         card["series"].publisher, *card["series"].genres, *card["series"].tags])))]
+    matched.sort(key=lambda card: card["series"].reading or card["series"].title)
+    if sorting == "rating":
+        matched.sort(key=lambda card: -(card["rating"] or 0))
+    elif sorting == "new":
+        matched.sort(key=lambda card: -(card["year"] or 0))
+    elif sorting == "old":
+        matched.sort(key=lambda card: card["year"] or 9999)
+    elif sorting == "books":
+        matched.sort(key=lambda card: -len(card["series"].books))
+    elif sorting == "random":
+        # A daily order keeps "more" pages consistent, unlike a fresh shuffle per request.
+        matched.sort(key=lambda card: hashlib.sha256((date.today().isoformat() + card["series"].id).encode()).hexdigest())
+    page = min(page, max(1, -(-len(matched) // LIBRARY_PAGE)))
+    current = {"q": query, "status": status, "demographic": demographic, "decade": decade, "author": author,
+               "publisher": publisher, "sort": sorting}
+
+    def link(**changes):
+        return url_for("library.index", **{name: value for name, value in {**current, **changes}.items() if value})
+
+    authors = Counter(name for card in cards for name in card["authors"])
+    publishers = Counter(card["series"].publisher for card in cards if card["series"].publisher)
+    demographics = Counter(card["demographic"] for card in cards)
+    facets = {"demographics": [(name, demographics[name]) for name in DEMOGRAPHICS if demographics[name]],
+              "unknown": demographics[""],
+              "decades": sorted(Counter(card["decade"] for card in cards if card["decade"]).items()),
+              # Like the existing Tools: the busiest publishers, and only authors with several series.
+              "publishers": sorted(dict(publishers.most_common(24) + ([(publisher, publishers[publisher])] if publisher else [])).items(),
+                                   key=lambda item: -item[1]),
+              "authors": sorted({name: count for name, count in authors.items() if count >= 2 or name == author}.items()),
+              "author_total": len(authors), "total": len(cards),
+              "with_metadata": sum(1 for card in cards if card["demographic"] or card["series"].publisher)}
+    shown = min(page * LIBRARY_PAGE, len(matched))
+    return {"scan": result, "cards": matched[:shown], "matched": len(matched), "shown": shown, "facets": facets,
+            "current": current, "link": link, "sorts": LIBRARY_SORTS,
+            "more": {"href": link(page=page + 1), "page": page + 1} if shown < len(matched) else None}
+
+
 @library.get("/library", endpoint="index")
 def library_index():
-    query, status, row = request.args.get("q", ""), request.args.get("status", ""), request.args.get("row", "")
-    result = scan()
-    entries = [s for s in result.series if (not query or search_key(query) in search_key(" ".join([s.title, s.author, s.reading, *s.genres, *s.tags])))
-               and (not status or s.status == status) and (not row or s.row == row)]
-    filters = {key: request.args.get(key, "") for key in ("author", "publisher", "label", "demographic", "decade", "rating", "sort")}
-    details = {item["id"]: item for item in current_app.extensions["inventory"].cached()["series"]}
-    def fact(series, key):
-        return details.get(series.id, {}).get("facts", {}).get(key)
-    for key in ("author", "publisher"):
-        if filters[key]:
-            entries = [s for s in entries if search_key(filters[key]) in search_key(getattr(s, key))]
-    if filters["label"]:
-        entries = [s for s in entries if search_key(filters["label"]) in search_key(details.get(s.id, {}).get("label", ""))]
-    if filters["demographic"]:
-        entries = [s for s in entries if filters["demographic"] == fact(s, "demographic") or filters["demographic"] in s.genres]
-    try:
-        if filters["decade"]:
-            decade = int(filters["decade"])
-            entries = [s for s in entries if type(fact(s, "original_year")) is int and fact(s, "original_year") // 10 * 10 == decade]
-        if filters["rating"]:
-            rating = float(filters["rating"])
-            if not 0 <= rating <= 5:
-                raise ValueError
-            entries = [s for s in entries if fact(s, "rating") is not None and fact(s, "rating") >= rating]
-    except ValueError:
-        raise ConfigError("年代・評価の検索条件を確認してください。") from None
-    sorting = filters["sort"]
-    if sorting not in {"", "name", "rating", "year", "books", "random"}:
-        raise ConfigError("蔵書の並び順を選んでください。")
-    if sorting == "name":
-        entries.sort(key=lambda s: s.reading or s.title)
-    elif sorting in {"rating", "year"}:
-        entries.sort(key=lambda s: fact(s, "rating" if sorting == "rating" else "original_year") or 0, reverse=True)
-    elif sorting == "books":
-        entries.sort(key=lambda s: len(s.books), reverse=True)
-    elif sorting == "random":
-        import hashlib
-        from datetime import date
-        entries.sort(key=lambda s: hashlib.sha256((date.today().isoformat() + s.id).encode()).hexdigest())
-    entries, paging = paginate(entries)
-    return render_template("library.html", entries=entries, total=len(result.series), query=query, status=status,
-                           row=row, rows=list(ROWS) + ["その他"], scan=result, pagination=paging, filters=filters)
+    return render_template("library.html", **library_view())
+
+
+@api.get("/library/results")
+def library_results():
+    return render_template("library_results.html", **library_view())
 
 
 @organize.get("/organize", endpoint="index")
