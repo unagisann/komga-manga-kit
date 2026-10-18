@@ -1,0 +1,11 @@
+{% extends 'base.html' %}{% import 'components.html' as ui %}
+{% block title %}{{ series.title }}{% endblock %}
+{% block scripts %}<script src="{{ asset_url('tools.js') }}" defer></script>{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">SERIES</p><h1>{{ series.title }}</h1><p>{{ series.author }} · {{ series.publisher }} · {{ status_labels.get(series.status,series.status) }}</p></div><a class="button primary" href="{{ read_url }}">Komga・蔵書をひらく</a></div>
+<p>{{ series.summary or 'あらすじは未設定です。' }}</p>
+<div class="hero-actions">{% if series.local_id %}<a class="button" href="{{ url_for('metadata.metadata_detail',series_id=series.local_id) }}">作品情報を補完・修正</a>{% endif %}<a class="button" href="{{ url_for('library.index') }}">蔵書へ</a></div>
+<section class="section"><h2>所持している巻 · {{ series.books|length }}冊</h2><div class="book-grid">{% for book in books %}<article class="panel">{% if book.path or book.komga_id %}<img class="page-thumbnail" loading="lazy" src="{{ url_for('tools.book_page',book_id=book.id,page=1) }}" alt="{{ book.volume }}巻の表紙">{% endif %}<h3>{{ book.volume or '巻数未設定' }}巻</h3>{% if book.pages %}<p>{{ book.pages }}ページ</p>{% endif %}{% if book.komga_id %}<a class="button" href="{{ book_urls[book.id] }}">読む</a>{% endif %}</article>{% endfor %}</div>{{ ui.pagination(pagination,'冊') }}</section>
+<details class="panel section"><summary>レーベル・読者層・連載開始年・評価</summary><form class="tool-facts section" data-series="{{ series.id }}" data-revision="{{ facts_revision }}">{% for key,label in [('label','レーベル'),('magazine','掲載誌'),('demographic','読者層')] %}<label>{{ label }}<input name="{{ key }}" maxlength="200" value="{{ series.facts.get(key,'') }}"></label>{% endfor %}<label>連載開始年<input name="original_year" type="number" min="1000" max="2100" value="{{ series.facts.original_year or '' }}"></label><label>評価（0〜5）<input name="rating" type="number" min="0" max="5" step="0.1" value="{{ series.facts.rating if series.facts.rating is not none else '' }}"></label><button class="button" type="submit">保存</button><p class="form-hint">年代は電子版の発売年ではなく、連載開始年を指定します。</p></form></details>
+<div id="tool-status" class="notice section" role="status" hidden></div>
+{% endblock %}

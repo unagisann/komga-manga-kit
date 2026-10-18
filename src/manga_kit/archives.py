@@ -1,5 +1,6 @@
 """Bounded archive reads and byte-preserving CBZ normalization."""
 from contextlib import contextmanager
+from copy import deepcopy
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
@@ -10,6 +11,7 @@ import struct
 import tempfile
 import unicodedata
 import zipfile
+from xml.etree.ElementTree import Element, SubElement, tostring
 
 from defusedxml.ElementTree import fromstring
 
@@ -45,6 +47,16 @@ def natural_key(name):
     value = name_key(name)
     return tuple((1, int(part)) if part.isdecimal() else (0, part)
                  for part in re.split(r"([0-9]+)", value)), value
+
+
+def zip_name(info):
+    """Recover Windows Japanese names when a ZIP has no UTF-8 flag."""
+    if not info.flag_bits & 0x800:
+        try:
+            return info.orig_filename.encode("cp437").decode("cp932")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    return info.orig_filename
 
 
 def check_zip_directory(source):
@@ -109,7 +121,7 @@ def check_rar_header(source):
 
 @contextmanager
 def reader(source, suffix):
-    if suffix in {".zip", ".cbz"}:
+    if suffix in {".zip", ".cbz", ".epub"}:
         check_zip_directory(source)
         with zipfile.ZipFile(source) as archive:
             def entries():
@@ -121,7 +133,7 @@ def reader(source, suffix):
                         with archive.open(entry) as content:
                             while chunk := content.read(BLOCK):
                                 yield chunk
-                    yield info.orig_filename, info.file_size, info.is_dir(), blocks()
+                    yield zip_name(info), info.file_size, info.is_dir(), blocks()
             yield "ZIP", archive.comment.hex(), entries()
     else:
         if suffix in {".rar", ".cbr"}:
@@ -144,13 +156,13 @@ def reader(source, suffix):
 def _comicinfo(content, page_count):
     try:
         root = fromstring(content, forbid_dtd=True, forbid_entities=True, forbid_external=True)
-        if root.tag != "ComicInfo":
+        if str(root.tag).rsplit("}", 1)[-1] != "ComicInfo":
             raise ValueError()
-        count = root.findtext("PageCount")
+        count = root.findtext("{*}PageCount")
         if count is not None and int(count) != page_count:
             raise ValueError()
         seen = set()
-        for page in root.findall("./Pages/Page"):
+        for page in root.findall("./{*}Pages/{*}Page"):
             index = int(page.attrib["Image"])
             if not 0 <= index < page_count or index in seen:
                 raise ValueError()
@@ -159,8 +171,45 @@ def _comicinfo(content, page_count):
         raise ConfigError("ComicInfo.xmlのページ数・参照・XMLを確認してください。元の情報は変更しません。") from exc
 
 
-def inspect_archive(fs, relative, spool=None):
+def read_metadata(source, suffix, select):
+    """Read only selected, bounded members without extracting image pages."""
+    result, names, total = {}, set(), 0
+    with reader(source, suffix) as (_, _, entries):
+        for count, (raw, size, directory, blocks) in enumerate(entries, 1):
+            if count > MAX_ENTRIES:
+                raise ConfigError("書庫内の項目数が上限を超えています。")
+            name = safe_name(raw, directory)
+            key = name_key(name)
+            if key in names:
+                raise ConfigError("書庫内に同じ名前・表記違いの項目があります。")
+            names.add(key)
+            if directory or not select(name):
+                continue
+            if size is None or not 0 <= size or total + size > MAX_XML_BYTES:
+                raise ConfigError("書庫内メタデータのサイズが上限を超えています。")
+            content = bytearray()
+            for chunk in blocks:
+                content.extend(chunk)
+                if len(content) > size or len(content) > MAX_XML_BYTES:
+                    raise ConfigError("書庫内メタデータのサイズ宣言と内容が一致しません。")
+            if len(content) != size:
+                raise ConfigError("書庫内メタデータのサイズ宣言と内容が一致しません。")
+            total += len(content)
+            result[name] = bytes(content)
+    return result
+
+
+PAGE_ORDERS = ("natural-path", "lexicographic-path")
+
+
+def inspect_archive(fs, relative, spool=None, *, page_order="natural-path", source_format=None):
+    if page_order not in PAGE_ORDERS:
+        raise ConfigError("ページ順は自然順または辞書順を指定してください。")
     suffix = PurePosixPath(relative).suffix.lower()
+    if source_format is not None:
+        if source_format not in {"ZIP", "RAR", "7z"}:
+            raise ConfigError("元書庫の形式を確認してください。")
+        suffix = {"ZIP": ".cbz", "RAR": ".rar", "7z": ".7z"}[source_format]
     if suffix not in FORMATS:
         raise ConfigError("変換対象はZIP/CBZ・RAR/CBR・7zの書庫に限ります。EPUBは対象外です。")
     members, names, total, metadata = [], set(), 0, None
@@ -207,7 +256,7 @@ def inspect_archive(fs, relative, spool=None):
                 members.append({"source": name, "size": size, "sha256": digest.hexdigest(),
                                 "metadata": is_metadata})
         pages = sorted((m for m in members if PurePosixPath(m["source"]).suffix.lower() in IMAGES),
-                       key=lambda member: natural_key(member["source"]))
+                       key=lambda member: natural_key(member["source"]) if page_order == "natural-path" else member["source"])
         if not pages:
             raise ConfigError("書庫に対応する画像ページがありません。")
         if any(part.startswith(".") or part == "__MACOSX" for member in pages for part in PurePosixPath(member["source"]).parts):
@@ -230,7 +279,7 @@ def inspect_archive(fs, relative, spool=None):
         estimated = total + sum(2 * len(m["target"].encode("utf-8")) + 256 for m in members) + len(comment) // 2 + 4096
         return {"format": format_name, "comment": comment, "pages": len(pages), "expanded_bytes": total,
                 "estimated_output_bytes": estimated,
-                "members": members, "order": "natural-path", "recipe": 1}
+                "members": members, "order": page_order, "recipe": 1}
     except (ConfigError, StateConflict, OSError):
         raise
     except Exception as exc:
@@ -240,11 +289,59 @@ def inspect_archive(fs, relative, spool=None):
 def build_cbz(fs, relative, expected, destination):
     with tempfile.TemporaryDirectory(prefix="pages-", dir=destination.parent) as temporary:
         spool = Path(temporary)
-        current = inspect_archive(fs, relative, spool)
-        if current != expected:
+        base = expected.get("base", expected)
+        current = inspect_archive(fs, relative, spool, page_order=base["order"], source_format=base["format"])
+        if current != base:
             raise StateConflict("確認後に書庫の内容が変わりました。計画を作り直してください。")
+        if "selected_pages" in expected:
+            selected = expected["selected_pages"]
+            original = {member["source"]: member for member in current["members"] if "page" in member}
+            if (not isinstance(selected, list) or not selected or any(not isinstance(name, str) for name in selected)
+                    or len(set(selected)) != len(selected) or set(selected) - original.keys()):
+                raise ConfigError("残すページと順番を確認してください。")
+            positions = {name: index for index, name in enumerate(selected)}
+            page_map = {member["page"] - 1: positions[name] for name, member in original.items() if name in positions}
+            width = max(4, len(str(len(selected))))
+            for index, member in enumerate(current["members"]):
+                if "page" in member and member["source"] in positions:
+                    page = positions[member["source"]] + 1
+                    member.update(page=page, target=f"{page:0{width}d}" + PurePosixPath(member["source"]).suffix.lower())
+                if member["metadata"]:
+                    path = spool / str(index)
+                    root = fromstring(path.read_bytes(), forbid_dtd=True, forbid_entities=True, forbid_external=True)
+                    namespace = root.tag.split("}")[0] + "}" if "}" in root.tag else ""
+                    count = root.find("{*}PageCount")
+                    if count is None:
+                        count = SubElement(root, namespace + "PageCount")
+                    count.text = str(len(selected))
+                    pages = root.find("{*}Pages")
+                    if pages is None:
+                        pages = SubElement(root, namespace + "Pages")
+                    first = None
+                    for page in list(pages):
+                        old = int(page.attrib["Image"])
+                        if old not in page_map:
+                            pages.remove(page)
+                            continue
+                        page.attrib["Image"] = str(page_map[old])
+                        if page.attrib.get("Type") == "FrontCover":
+                            page.attrib["Type"] = "Story"
+                        if page_map[old] == 0:
+                            first = page
+                    if first is None:
+                        first = SubElement(pages, namespace + "Page", {"Image": "0"})
+                    first.attrib["Type"] = "FrontCover"
+                    content = tostring(root, encoding="utf-8", xml_declaration=True)
+                    _comicinfo(content, len(selected))
+                    path.write_bytes(content)
+                    member.update(size=len(content), sha256=hashlib.sha256(content).hexdigest())
         ordered = sorted(enumerate(current["members"]),
                          key=lambda pair: (0, pair[1]["page"]) if "page" in pair[1] else (1, pair[1]["target"]))
+        if "selected_pages" in expected:
+            ordered = [(index, member) for index, member in ordered if "page" not in member or member["source"] in positions]
+            targets = [name_key(member["target"]) for _, member in ordered]
+            if len(set(targets)) != len(targets):
+                raise ConfigError("ページ名と補助ファイルが衝突しています。")
         with destination.open("xb") as output:
             os.chmod(destination, 0o600)
             with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:

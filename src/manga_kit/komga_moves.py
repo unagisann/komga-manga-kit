@@ -6,7 +6,7 @@ import time
 from urllib.parse import quote
 
 from .config import ConfigError
-from .komga import KomgaError
+from .komga import WRITE_VERSIONS_LABEL, KomgaError, write_version_supported
 from .paths import map_komga_path
 from .state import StateConflict
 
@@ -49,12 +49,10 @@ class KomgaMoveGuard:
         except ConfigError:
             return None
 
-    def snapshot(self, entries, groups):
-        if not self.settings.komga_url:
-            return None
-        info = self.client.get("/actuator/info")
-        if info.get("build", {}).get("version") != "1.29.0":
-            raise ConfigError("整理のKomga連携は実機検証済みの1.29.0に限ります。")
+    def library(self):
+        """Return the Komga library at the configured root after the write preconditions."""
+        if not write_version_supported(self.client.get("/actuator/info")):
+            raise ConfigError(f"整理のKomga連携は実機検証済みのKomga {WRITE_VERSIONS_LABEL} に限ります。")
         libraries = self.client.get("/api/v1/libraries")
         matches = [lib for lib in libraries if self.relative(lib["root"]) == "."]
         if len(matches) != 1:
@@ -63,7 +61,14 @@ class KomgaMoveGuard:
         if (not lib["hashFiles"] or lib["emptyTrashAfterScan"] or lib["scanOnStartup"]
                 or lib["scanInterval"] != "DISABLED" or lib["convertToCbz"] or lib["repairExtensions"]):
             raise ConfigError("Komgaはハッシュ有効・定期/起動時スキャン無効・ゴミ箱自動削除無効・自動変換無効にしてください。")
-        all_books = self.books()
+        return lib
+
+    def snapshot(self, entries, groups, *, books=None):
+        if not self.settings.komga_url:
+            return None
+        lib = self.library()
+        # Callers that also need the active list pass it in, so it is fetched once.
+        all_books = self.books() if books is None else books
         hash_counts = Counter(book.get("fileHash") for book in all_books)
         trash_hashes = {book.get("fileHash") for book in self.books(deleted=True)}
         mapped = {}
@@ -104,9 +109,8 @@ class KomgaMoveGuard:
     def restore_snapshot(self, snapshot, entries):
         if snapshot is None:
             return None
-        info = self.client.get("/actuator/info")
-        if info.get("build", {}).get("version") != "1.29.0":
-            raise ConfigError("復元時も実機検証済みのKomga 1.29.0を使用してください。")
+        if not write_version_supported(self.client.get("/actuator/info")):
+            raise ConfigError(f"復元時も実機検証済みのKomga {WRITE_VERSIONS_LABEL} を使用してください。")
         lib = next((lib for lib in self.client.get("/api/v1/libraries") if lib["id"] == snapshot["library_id"]), None)
         if (not lib or self.relative(lib["root"]) != "." or not lib["hashFiles"]
                 or lib["scanInterval"] != "DISABLED" or lib["scanOnStartup"] or lib["emptyTrashAfterScan"]

@@ -13,7 +13,14 @@
  'moon': ['M21 13a9 9 0 0 1-10-10 9 9 0 1 0 10 10'],
  'plug': ['M8 3v5m8-5v5M6 8h12v3a6 6 0 0 1-12 0z', 'M12 17v4'],
  'info': ['M12 11v6m0-10h.01', 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0'],
- 'grid': ['M3 3h7v7H3zm11 0h7v7h-7zM3 14h7v7H3zm11 0h7v7h-7z']
+ 'grid': ['M3 3h7v7H3zm11 0h7v7h-7zM3 14h7v7H3zm11 0h7v7h-7z'],
+ 'compass': ['M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0', 'm16 8-2 6-6 2 2-6z'],
+ 'square-plus': ['M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z', 'M8 12h8m-4-4v8'],
+ 'tv': ['M4 7h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1Z', 'm7 3 5 4 5-4'],
+ 'chart': ['M3 12h4v9H3zM10 7h4v14h-4zM17 3h4v18h-4z'],
+ 'clock': ['M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0', 'M12 6v6l4 2'],
+ 'image': ['M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z', 'm3 16 5-5 4 4 3-3 6 6', 'M8 7h.01'],
+ 'plus': ['M5 12h14M12 5v14']
 } %}
 <svg class="icon" width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{% for path in paths.get(name, paths['book']) %}<path d="{{ path }}"/>{% endfor %}</svg>
 {%- endmacro %}
@@ -28,4 +35,26 @@
 {% macro scan_notice(scan) -%}
 {% if scan.truncated %}<div class="notice warning" role="status">ファイル上限に達しました。一部の蔵書だけを表示しています。設定の max_files を調整してください。</div>{% endif %}
 {% for warning in scan.warnings %}<div class="notice warning" role="status">{{ warning }}</div>{% endfor %}
+{%- endmacro %}
+
+{% macro pagination(paging, unit='作品') -%}
+{% if paging.pages > 1 %}<nav class="source-pages" aria-label="ページ切り替え">
+{% if paging.previous %}<a class="button" rel="prev" href="{{ paging.previous }}">前のページ</a>{% endif %}
+<span>{{ paging.page }} / {{ paging.pages }} ページ · {{ paging.total }}{{ unit }}</span>
+{% if paging.next %}<a class="button" rel="next" href="{{ paging.next }}">次のページ</a>{% endif %}
+</nav>{% endif %}
+{%- endmacro %}
+
+{% macro plan_item(item) -%}
+<article class="plan-item {{ item.state }}"><div class="plan-item-heading"><strong>{{ item.title }}</strong><span class="chip">{{ {'ready': '変更予定', 'unchanged': '変更なし', 'blocked': '要確認'}[item.state] }}</span></div><code class="source-path">{{ item.source }}</code><span class="path-arrow">↓</span><code class="target-path">{{ item.target or '巻数の確認が必要です' }}</code>{% for issue in item.issues %}<p class="warning-text">{{ issue }}</p>{% endfor %}</article>
+{%- endmacro %}
+
+{% macro source_identity(link) -%}
+{% if link.identity %}<details class="section"><summary>選んだ候補の情報</summary>
+  <p class="form-hint">{{ link.identity.product_title }}{% if link.identity.author %} · {{ link.identity.author }}{% endif %}</p>
+  <p class="form-hint">出版社: {{ link.identity.publisher or '未設定' }} · レーベル: {{ link.identity.label or '未設定' }} · 版: {{ link.identity.editions|join(' / ') or '表記なし' }}</p>
+  <p class="form-hint">確認済みの作品名・別名: {{ link.identity.titles|join(' / ') }}</p>
+  {% if link.identity.readership_source == 'label' %}<p class="form-hint">読者層の根拠: レーベル名の明示的な表記</p>{% endif %}
+  {% if link.match and link.match.warnings %}<p class="form-hint">保存時の確認事項:</p><ul class="form-hint">{% for warning in link.match.warnings %}<li>{{ warning }}</li>{% endfor %}</ul>{% endif %}
+</details>{% endif %}
 {%- endmacro %}

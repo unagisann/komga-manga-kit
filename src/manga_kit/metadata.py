@@ -7,16 +7,38 @@ import json
 from .config import ConfigError
 from .japanese import hiragana
 from .models import ScanResult
+from .provenance import PROVIDER_LABELS, source_links, stored_links
 from .state import StateConflict
 
-FIELDS = {"title": 300, "author": 300, "reading": 300, "status": 20, "summary": 8000, "publisher": 300}
+FIELDS = {"title": 300, "author": 300, "reading": 300, "status": 20, "summary": 8000, "publisher": 300,
+          "genres": 100, "tags": 100}
+LIST_FIELDS = {"genres", "tags"}
+
+
+def classification_values(value):
+    if not isinstance(value, list) or len(value) > 100:
+        raise ConfigError("タグ・ジャンルはそれぞれ100個以内の文字列の配列で指定してください。")
+    result, seen = [], set()
+    for item in value:
+        if not isinstance(item, str) or not 1 <= len(item) <= 100 or any(ord(c) < 32 for c in item):
+            raise ConfigError("タグ・ジャンルの各項目は1〜100文字で指定してください。")
+        item = item.strip()
+        if not item:
+            raise ConfigError("タグ・ジャンルに空の項目は指定できません。")
+        if item.casefold() not in seen:
+            result.append(item)
+            seen.add(item.casefold())
+    return result
 
 
 def validate_fields(fields):
     if not isinstance(fields, dict) or not fields or set(fields) - FIELDS.keys():
-        raise ConfigError("作品名・著者・読み・状態・あらすじ・出版社を指定してください。")
+        raise ConfigError("作品名・著者・読み・状態・あらすじ・出版社・タグ・ジャンルを指定してください。")
     result = {}
     for key, value in fields.items():
+        if key in LIST_FIELDS:
+            result[key] = classification_values(value)
+            continue
         if not isinstance(value, str) or len(value) > FIELDS[key] or any(ord(c) < 32 and c not in "\n\t" for c in value):
             raise ConfigError(f"{key} の値または文字数が不正です。")
         value = value.strip()
@@ -43,9 +65,9 @@ def apply_edits(result, edits):
                 setattr(series, key, value)
         if fields:
             series.sources.append("manual")
-        provenance = edits.get(series.id, {}).get("provenance", {})
-        if provenance.get("applied_fields"):
-            series.sources.append("楽天Books" if provenance["provider"] == "rakuten_books" else "架空の書誌データ")
+        for provenance in source_links(edits.get(series.id, {}).get("provenance", {})).values():
+            if provenance.get("applied_fields"):
+                series.sources.append(PROVIDER_LABELS.get(provenance["provider"], provenance["provider"]))
     return result
 
 
@@ -64,9 +86,10 @@ class MetadataService:
 
     def inspect(self, series_id):
         base, current, edit = self.series(series_id)
+        links = source_links(edit.get("provenance", {}))
         return {"series": current.to_dict(), "original": {key: getattr(base, key) for key in FIELDS},
                 "overrides": edit["fields"], "revision": edit["revision"], "base_fingerprint": fingerprint(base),
-                "provenance": edit.get("provenance", {})}
+                "provenance": links.get("rakuten_books", {}), "provenances": links}
 
     def preview(self, series_id, fields=None, *, reset=False, refresh=False):
         fields = {} if reset else validate_fields(fields)
@@ -84,22 +107,30 @@ class MetadataService:
         with self.store.editing():
             return self._save(series_id, fields, revision, base_fingerprint, reset=reset, provenance=provenance)
 
-    def _save(self, series_id, fields, revision, base_fingerprint, *, reset=False, provenance=None):
+    def _save(self, series_id, fields, revision, base_fingerprint, *, reset=False, provenance=None, source_provider="rakuten_books"):
         if type(revision) is not int or revision < 0 or not isinstance(base_fingerprint, str):
             raise ConfigError("保存前に差分プレビューを取得してください。")
         preview = self.preview(series_id, fields, reset=reset, refresh=True)
         if preview["base_fingerprint"] != base_fingerprint:
             raise StateConflict("書庫の情報が更新されました。差分を再確認してください。")
         source_action = None if provenance is None else "linked" if provenance else "unlinked"
-        if provenance is None:
-            provenance = {} if reset else deepcopy(self.store.edits().get(series_id, {}).get("provenance", {}))
+        links = {} if reset else source_links(self.store.edits().get(series_id, {}).get("provenance", {}))
+        changed = {item["field"] for item in preview["changes"]}
+        for provider, link in links.items():
+            if provenance is not None and provider == source_provider:
+                continue
+            for key in ("applied_fields", "adjusted_fields"):
+                link[key] = [field for field in link.get(key, []) if field not in changed]
+        if provenance is not None:
             if provenance:
-                changed = {item["field"] for item in preview["changes"]}
-                for key in ("applied_fields", "adjusted_fields"):
-                    provenance[key] = [field for field in provenance.get(key, []) if field not in changed]
+                links[source_provider] = deepcopy(provenance)
+            else:
+                links.pop(source_provider, None)
+        provenance = stored_links(links)
         detail = {"changes": preview["changes"], "reset": reset, "provenance": provenance}
         if source_action:
             detail["source_action"] = source_action
+            detail["source_provider"] = source_provider
         updated = self.store.save_edit(series_id, preview["fields"], revision, detail,
                                        provenance=provenance)
         return {**self.inspect(series_id), "revision": updated}

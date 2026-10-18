@@ -1,6 +1,18 @@
 """Original tiny stored RAR fixtures, built from headers without third-party books."""
 import struct
 import zlib
+import zipfile
+
+
+def cp932_zip(path, members):
+    """Original ZIP fixture with Japanese Windows names and no UTF-8 flag."""
+    class JapaneseInfo(zipfile.ZipInfo):
+        def _encodeFilenameFlags(self):
+            return self.filename.encode('cp932'), self.flag_bits & ~0x800
+
+    with zipfile.ZipFile(path, 'w') as archive:
+        for name, data in members:
+            archive.writestr(JapaneseInfo(name), data)
 
 
 def stored_rar(path, members, version=4):
@@ -13,7 +25,7 @@ def stored_rar(path, members, version=4):
             body = struct.pack('<BHHIIBIIBBHI', 0x74, 0x8000, 32 + len(name), len(data), len(data),
                                3, zlib.crc32(data), 0, 20, 0x30, len(name), 0o100644) + name
             content.extend(header(body) + data)
-        content.extend(header(struct.pack('<BHH', 0x7b, 0, 7)))
+        content.extend(header(struct.pack('<BHH', 0x7b, 0x4000, 7)))
     else:
         def vint(value):
             result = bytearray()

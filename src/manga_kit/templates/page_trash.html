@@ -1,0 +1,5 @@
+{% extends 'base.html' %}
+{% block title %}ページ修正の履歴・ゴミ箱{% endblock %}
+{% block scripts %}<script src="{{ asset_url('tools.js') }}" defer></script>{% endblock %}
+{% block content %}<div class="page-heading"><div><h1>ページ修正の履歴・ゴミ箱</h1><p>削除したページを含む元書庫を保管しています。完全削除すると、この操作からの復元はできません。</p></div></div><div id="tool-status" class="notice" role="status" hidden></div>
+{% for item in rows %}<section class="panel section"><h2>{{ item.volume }}巻 · {{ item.before }} → {{ item.after }}ページ</h2><p>{{ item.deleted }}ページを削除 · {{ item.status }}{% if item.purged %} · バックアップ削除済み{% endif %}</p><a class="button" href="{{ url_for('maintenance.edit_pages',book_id=item.book_id,plan=item.id) }}">操作を確認・復元</a>{% if not item.purged and item.status in ['completed','restored'] %}<details><summary>バックアップを完全削除する</summary><p>元書庫のバックアップを削除します。現在の書庫は保持します。削除したページを戻せなくなります。</p><button class="button danger" data-tool-action="/api/tools/page-operations/{{ item.id }}/purge" data-payload="{{ {'confirm':item.digest ~ ':purge'}|tojson|forceescape }}">元書庫のバックアップを完全削除</button></details>{% endif %}</section>{% else %}<p class="empty-state">ページ修正の履歴はありません。</p>{% endfor %}{% endblock %}

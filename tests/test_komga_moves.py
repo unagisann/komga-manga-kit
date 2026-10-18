@@ -35,9 +35,11 @@ class MoveGuardTests(unittest.TestCase):
         self.client.request.side_effect = self.request
         self.guard = KomgaMoveGuard(self.settings, self.client)
 
+    version = '1.29.0'
+
     def get(self, path):
         if path == '/actuator/info':
-            return {'build': {'version': '1.29.0'}}
+            return {'build': {'version': self.version}}
         if path == '/api/v1/libraries':
             return [self.library]
         if path.startswith('/api/v1/series/'):
@@ -58,6 +60,20 @@ class MoveGuardTests(unittest.TestCase):
         guard = KomgaMoveGuard(replace(self.settings, komga_url=''), self.client)
         self.assertIsNone(guard.snapshot(self.entries, self.groups))
         self.client.get.assert_not_called()
+
+    def test_only_verified_versions_are_accepted_for_snapshot_and_restore(self):
+        self.version = '1.29.1'
+        snapshot = self.snapshot()
+        self.assertIsNotNone(self.guard.restore_snapshot(snapshot, self.entries))
+        for version in ('1.29.2', '1.30.0', '1.28.1', '', None):
+            self.version = version
+            with self.subTest(version=version):
+                with self.assertRaises(ConfigError):
+                    self.snapshot()
+                with self.assertRaises(ConfigError):
+                    self.guard.restore_snapshot(snapshot, self.entries)
+        with patch.object(self.client, 'get', return_value={'build': 'malformed'}), self.assertRaises(ConfigError):
+            self.snapshot()
 
     def test_unknown_version_and_unsafe_library_flags_are_rejected(self):
         with patch.object(self.client, 'get', return_value={'build': {'version': 'other'}}), self.assertRaises(ConfigError):

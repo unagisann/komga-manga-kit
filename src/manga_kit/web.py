@@ -1,10 +1,14 @@
 from dataclasses import asdict
 import os
+import ipaddress
+from urllib.parse import urlsplit
 
-from flask import Blueprint, current_app, jsonify, render_template, request
+from flask import Blueprint, current_app, jsonify, render_template, request, url_for
 from werkzeug.exceptions import NotFound
 
 from .config import ConfigError
+from .credentials import secret
+from .auto_enrichment import PROVIDER_FIELDS, missing_fields
 from .japanese import ROWS, search_key
 from .organizer import plan_organization
 from .paths import map_komga_path
@@ -13,6 +17,8 @@ home = Blueprint("home", __name__)
 library = Blueprint("library", __name__)
 organize = Blueprint("organize", __name__)
 metadata = Blueprint("metadata", __name__)
+normalize = Blueprint("normalize", __name__)
+management = Blueprint("management", __name__)
 jobs = Blueprint("jobs", __name__)
 settings = Blueprint("settings", __name__)
 roadmap = Blueprint("roadmap", __name__)
@@ -27,34 +33,277 @@ def configuration():
     return current_app.config["MANGA_KIT"]
 
 
+@normalize.get("/normalize", endpoint="index")
+def normalization_index():
+    store, service = current_app.extensions["state"], current_app.extensions["normalization"]
+    identifier = request.args.get("check")
+    job = store.job(identifier, include_result=True) if identifier else store.latest_normalization()
+    if identifier and (job is None or job["kind"] != "normalization_check"):
+        raise NotFound()
+    operation = service.operations.inspect(job["result"]["operation_id"]) if job and job["result"] and job["result"].get("operation_id") else None
+    action = store.job(request.args["action"]) if request.args.get("action") else None
+    if request.args.get("action") and (action is None or action["kind"] not in {"normalization_execute", "normalization_restore"}):
+        raise NotFound()
+    active = [entry for entry in store.jobs() if entry["kind"] in {"normalization_execute", "normalization_restore"}
+              and entry["status"] in {"queued", "running"}]
+    if active and action is None:
+        action = active[0]
+    items, paging = paginate(job["result"]["items"], size=20) if job and job["result"] else ([], None)
+    return render_template("normalize.html", check=job, operation=operation, action=action, busy=bool(active), items=items, pagination=paging)
+
+
+def require_normalization_execution():
+    config = configuration()
+    if config.demo or not config.execution_enabled or not config.web_execution_enabled:
+        raise ConfigError("Web実行は無効です。execution.enabled と execution.web_enabled を有効にしてください。")
+    require_admin_access()
+
+
+def require_admin_access():
+    try:
+        local = ipaddress.ip_address(request.remote_addr or "").is_loopback
+    except ValueError:
+        local = False
+    hostname = urlsplit("//" + request.host).hostname
+    if not current_app.config["ADMIN_AUTH_ENABLED"] and not (local and hostname in {"localhost", "127.0.0.1", "::1"}):
+        raise ConfigError("ローカル接続で実行するか、管理者認証を設定してください。")
+    origin = request.headers.get("Origin")
+    if origin and origin.rstrip("/") != request.host_url.rstrip("/"):
+        raise ConfigError("同じ画面から差分を確認して実行してください。")
+
+
+@api.post("/normalization/checks")
+def normalization_check():
+    body_with_keys(set())
+    job_id = current_app.extensions["normalization"].submit_check()
+    return jsonify(current_app.extensions["state"].job(job_id)), 202
+
+
+@api.post("/normalization/checks/<job_id>/<action>")
+def normalization_action(job_id, action):
+    require_normalization_execution()
+    if action not in {"execute", "restore"}:
+        raise NotFound()
+    body = body_with_keys({"confirm"}, {"confirm"})
+    task = current_app.extensions["normalization"].submit_action(job_id, body["confirm"], restore=action == "restore")
+    return jsonify(current_app.extensions["state"].job(task)), 202
+
+
+def paginate(entries, size=60):
+    try:
+        page = int(request.args.get('page', '1'))
+    except ValueError:
+        raise ConfigError('ページは1以上の整数で指定してください。') from None
+    if page < 1:
+        raise ConfigError('ページは1以上の整数で指定してください。')
+    total = len(entries)
+    pages = max(1, (total + size - 1) // size)
+    page = min(page, pages)
+    start = (page - 1) * size
+    args = {**(request.view_args or {}),
+            **{key: request.args[key] for key in ('q', 'status', 'row', 'state', 'preview', 'provider', 'batch', 'check', 'action',
+                                                 'year', 'category', 'source', 'account', 'author', 'publisher', 'label', 'demographic', 'decade', 'rating', 'sort') if key in request.args}}
+    paging = {'page': page, 'pages': pages, 'total': total, 'start': start + 1 if total else 0,
+              'end': min(start + size, total),
+              'previous': url_for(request.endpoint, **args, page=page - 1) if page > 1 else None,
+              'next': url_for(request.endpoint, **args, page=page + 1) if page < pages else None}
+    return entries[start:start + size], paging
+
+
 @home.get("/")
 def index():
+    return render_template("home.html")
+
+
+@api.get("/portal/library")
+def portal_library():
+    import hashlib
+    import random
+    from datetime import date, datetime
+    from zoneinfo import ZoneInfo
+    from .inventory import number
+    inventory = current_app.extensions["inventory"]
+    demo = configuration().demo
+
+    def cover_url(row, book=None):
+        # The first page is the cover. Demo books have no images, so the template draws one.
+        book = book or next(iter((row or {}).get("books") or []), None)
+        if demo or not book or not (book.get("path") or book.get("komga_id")):
+            return None
+        return url_for("tools.book_page", book_id=book["id"], page=1)
+
+    def local_time(value):
+        try:
+            return datetime.fromisoformat(value).astimezone(ZoneInfo("Asia/Tokyo"))
+        except (TypeError, ValueError):
+            return None
+
+    def added(value):
+        moment = local_time(value)
+        return f"{moment.month}/{moment.day} 追加" if moment else ""
+
+    common = {"cover_url": cover_url, "completed": inventory.binge(12)}
+    if request.args.get("section") == "completed":
+        return render_template("portal_library.html", section="completed", **common)
     result = scan()
-    return render_template("home.html", stats=result.stats(), entries=result.series[:4], scan=result)
+    rows = {row["id"]: row for row in inventory.cached()["series"]}
+    anime = current_app.extensions["feeds"].read("anime")
+    anime_owned = [item for item in (anime or {}).get("entries", []) if item.get("owned") and item.get("series_id") in rows]
+    pick = None
+    if anime_owned:
+        entry = random.choice(anime_owned[:5])
+        row = rows[entry["series_id"]]
+        pick = {"entry": entry, "row": row, "url": inventory.read_url(row)}
+    new_volumes = []
+    for item in current_app.extensions["new_volumes"].read():
+        if not item.get("new"):
+            continue
+        store = next((source["latest"]["url"] for source in item.get("sources", {}).values()
+                      if (source.get("latest") or {}).get("url")), "")
+        latest, owned = number(item.get("latest")), number(item.get("local_max"))
+        new_volumes.append({**item, "store": store, "diff": latest - owned if latest is not None and owned is not None else "?"})
+    checked = local_time(max((item.get("updated") or "" for item in new_volumes), default=""))
+    curated = current_app.extensions["feeds"].read("curated")
+    picks = list((curated or {}).get("entries", []))
+    picks.sort(key=lambda item: hashlib.sha256((date.today().isoformat() + item["id"]).encode()).hexdigest())
+    return render_template("portal_library.html", scan=result, stats=result.stats(), rows=rows, added=added,
+                           read_url=inventory.read_url, recent=inventory.recent(12), anime=anime,
+                           anime_owned=anime_owned[:12], pick=pick, new_volumes=new_volumes,
+                           checked=checked.strftime("%Y-%m-%d %H:%M") if checked else "",
+                           picks=picks[:6], **common)
 
 
 @library.get("/library", endpoint="index")
 def library_index():
     query, status, row = request.args.get("q", ""), request.args.get("status", ""), request.args.get("row", "")
     result = scan()
-    entries = [s for s in result.series if (not query or search_key(query) in search_key(s.title + s.author + s.reading))
+    entries = [s for s in result.series if (not query or search_key(query) in search_key(" ".join([s.title, s.author, s.reading, *s.genres, *s.tags])))
                and (not status or s.status == status) and (not row or s.row == row)]
+    filters = {key: request.args.get(key, "") for key in ("author", "publisher", "label", "demographic", "decade", "rating", "sort")}
+    details = {item["id"]: item for item in current_app.extensions["inventory"].cached()["series"]}
+    def fact(series, key):
+        return details.get(series.id, {}).get("facts", {}).get(key)
+    for key in ("author", "publisher"):
+        if filters[key]:
+            entries = [s for s in entries if search_key(filters[key]) in search_key(getattr(s, key))]
+    if filters["label"]:
+        entries = [s for s in entries if search_key(filters["label"]) in search_key(details.get(s.id, {}).get("label", ""))]
+    if filters["demographic"]:
+        entries = [s for s in entries if filters["demographic"] == fact(s, "demographic") or filters["demographic"] in s.genres]
+    try:
+        if filters["decade"]:
+            decade = int(filters["decade"])
+            entries = [s for s in entries if type(fact(s, "original_year")) is int and fact(s, "original_year") // 10 * 10 == decade]
+        if filters["rating"]:
+            rating = float(filters["rating"])
+            if not 0 <= rating <= 5:
+                raise ValueError
+            entries = [s for s in entries if fact(s, "rating") is not None and fact(s, "rating") >= rating]
+    except ValueError:
+        raise ConfigError("年代・評価の検索条件を確認してください。") from None
+    sorting = filters["sort"]
+    if sorting not in {"", "name", "rating", "year", "books", "random"}:
+        raise ConfigError("蔵書の並び順を選んでください。")
+    if sorting == "name":
+        entries.sort(key=lambda s: s.reading or s.title)
+    elif sorting in {"rating", "year"}:
+        entries.sort(key=lambda s: fact(s, "rating" if sorting == "rating" else "original_year") or 0, reverse=True)
+    elif sorting == "books":
+        entries.sort(key=lambda s: len(s.books), reverse=True)
+    elif sorting == "random":
+        import hashlib
+        from datetime import date
+        entries.sort(key=lambda s: hashlib.sha256((date.today().isoformat() + s.id).encode()).hexdigest())
+    entries, paging = paginate(entries)
     return render_template("library.html", entries=entries, total=len(result.series), query=query, status=status,
-                           row=row, rows=list(ROWS) + ["その他"], scan=result)
+                           row=row, rows=list(ROWS) + ["その他"], scan=result, pagination=paging, filters=filters)
 
 
 @organize.get("/organize", endpoint="index")
 def organize_index():
-    result = scan()
     config = configuration()
-    plan = plan_organization(result.series, config.layout, None if config.demo else config.library_root)
-    return render_template("organize.html", plan=plan, layout=asdict(config.layout), scan=result)
+    store = current_app.extensions["state"]
+    preview_id = request.args.get("preview")
+    job = store.job(preview_id, include_result=True) if preview_id else store.latest_preview()
+    if preview_id and (job is None or job["kind"] != "preview" or job["status"] != "succeeded"):
+        raise NotFound()
+    # A plain visit uses the configured rules. A result link restores the rules
+    # used for that preview without saving them as application configuration.
+    layout = asdict(config.layout)
+    if job and preview_id:
+        layout = asdict(config.layout.with_overrides(job["result"].get("layout", {})))
+    if job and job["result"].get("layout") != layout:
+        job = None
+    context = plan_view(job["result"], preview_id=job["id"]) if job else {}
+    return render_template("organize.html", layout=layout, preview_job=job, **context)
+
+
+def filtered_plan_items(result, state="", query=""):
+    if state not in {"", "all", "ready", "unchanged", "blocked"}:
+        raise ConfigError("状態は all、ready、unchanged、blocked を指定してください。")
+    key = search_key(query)
+    return [item for item in result["items"]
+            if (state in {"", "all"} or item["state"] == state)
+            and (not key or key in search_key(" ".join([item["title"], item["source"], item["target"] or "", *item["issues"]])))]
+
+
+def plan_view(result, *, preview_id=None):
+    default = next((state for state in ("blocked", "ready", "unchanged") if result["counts"][state]), "all")
+    state, query = request.args.get("state", default), request.args.get("q", "")
+    items, paging = paginate(filtered_plan_items(result, state, query), size=20)
+    args = {**(request.view_args or {}), "q": query}
+    if preview_id:
+        args["preview"] = preview_id
+    # Keep the chosen state on page links even when it was initially implicit.
+    for direction, step in (("previous", -1), ("next", 1)):
+        if paging[direction]:
+            paging[direction] = url_for(request.endpoint, **args, state=state, page=paging["page"] + step)
+    return {"plan": {**result, "items": items}, "pagination": paging, "query": query, "selected_state": state,
+            "plan_filters": [{"state": key, "label": label,
+                              "count": len(result["items"]) if key == "all" else result["counts"][key],
+                              "url": url_for(request.endpoint, **args, state=key)}
+                             for key, label in (("blocked", "要確認"), ("ready", "変更予定"),
+                                                ("unchanged", "変更なし"), ("all", "すべて"))]}
 
 
 @metadata.get("/metadata", endpoint="index")
 def metadata_index():
     result = scan()
-    return render_template("metadata.html", entries=result.series, stats=result.stats(), scan=result)
+    provider = request.args.get("provider", "rakuten_books")
+    state, query = request.args.get("state", "missing"), request.args.get("q", "")
+    if provider not in PROVIDER_FIELDS or state not in {"missing", "all", "unlinked", "links"}:
+        raise ConfigError("補完する情報と表示条件を選んでください。")
+    missing = {series.id: missing_fields(series.to_dict(), provider) for series in result.series}
+    from .provenance import source_links
+    links = current_app.extensions["state"].edits()
+    entries = [series for series in result.series if (state != "missing" or missing[series.id])
+               and (state != "unlinked" or provider not in source_links(links.get(series.id, {}).get("provenance", {})))
+               and search_key(query) in search_key(series.title + series.author + series.reading)]
+    entries, paging = paginate(entries)
+    store = current_app.extensions["state"]
+    batch_id = request.args.get("batch")
+    batch = store.job(batch_id, include_result=True) if batch_id else None
+    if batch_id and (batch is None or batch["kind"] != "enrichment"):
+        raise NotFound()
+    recent = [job for job in store.jobs() if job["kind"] == "enrichment"][:5]
+    return render_template("metadata.html", entries=entries, missing=missing, scan=result, pagination=paging,
+                           provider=provider, state=state, query=query,
+                           catalogs=current_app.extensions["enrichment"].statuses(), batch=batch, recent=recent,
+                           saved=store.operation_edits(batch_id, "enrichment") if batch else None)
+
+
+@management.get("/manage", endpoint="index")
+def management_index():
+    return render_template("management.html")
+
+
+@management.get("/manage/metadata", endpoint="metadata")
+def manual_metadata_index():
+    result = scan()
+    query = request.args.get("q", "")
+    entries = [series for series in result.series if search_key(query) in search_key(series.title + series.author)]
+    entries, paging = paginate(entries)
+    return render_template("metadata_manual.html", entries=entries, query=query, scan=result, pagination=paging)
 
 
 @metadata.get("/metadata/<series_id>")
@@ -66,7 +315,12 @@ def metadata_detail(series_id):
 @metadata.get("/metadata/<series_id>/sources")
 def metadata_sources(series_id):
     data = metadata_service().inspect(series_id)
-    return render_template("metadata_sources.html", **data, catalog=current_app.extensions["enrichment"].status())
+    provider = request.args.get("provider", "rakuten_books")
+    enrichment = current_app.extensions["enrichment"]
+    data["provenance"] = data["provenances"].get(provider, {})
+    return render_template("metadata_sources.html", **data, catalog=enrichment.status(provider), catalogs=enrichment.statuses(),
+                           known_titles=enrichment.known_titles(series_id),
+                           return_url=url_for("metadata.index", provider=provider, batch=request.args.get("batch")))
 
 
 @jobs.get("/jobs", endpoint="index")
@@ -80,18 +334,16 @@ def job_detail(job_id):
     job = current_app.extensions["state"].job(job_id, include_result=True)
     if job is None:
         raise NotFound()
-    total = 0
-    if job["result"] and "items" in job["result"]:
-        total = len(job["result"]["items"])
-        job["result"]["items"] = job["result"]["items"][:200]
-    return render_template("job_detail.html", job=job, total_items=total)
+    context = plan_view(job["result"]) if job["kind"] == "preview" and job["result"] else {}
+    return render_template("job_detail.html", job=job, **context)
 
 
 @settings.get("/settings", endpoint="index")
 def settings_index():
     config = configuration()
-    return render_template("settings.html", key_configured=bool(os.getenv(config.api_key_env)), layout=asdict(config.layout),
-                           catalog=current_app.extensions["enrichment"].status())
+    return render_template("settings.html", key_configured=bool(secret(config, config.api_key_env)), layout=asdict(config.layout),
+                           catalog=current_app.extensions["enrichment"].status(),
+                           catalogs=current_app.extensions["enrichment"].statuses())
 
 
 @roadmap.get("/roadmap", endpoint="index")
@@ -129,9 +381,12 @@ def api_settings():
     config = configuration()
     return jsonify(name=config.name, demo=config.demo, library_root=str(config.library_root),
                    max_files=config.max_files, layout=asdict(config.layout), komga_url=config.komga_url,
-                   api_key_configured=bool(os.getenv(config.api_key_env)), preview_only=True,
-                   execution_enabled=config.execution_enabled, execution_interface="cli",
+                   api_key_configured=bool(secret(config, config.api_key_env)),
+                   preview_only=config.demo or not config.web_execution_enabled,
+                   execution_enabled=config.execution_enabled, web_execution_enabled=config.web_execution_enabled,
+                   execution_interface="cli+web-normalization" if config.web_execution_enabled else "cli",
                    metadata_catalog=current_app.extensions["enrichment"].status(),
+                   metadata_catalogs=current_app.extensions["enrichment"].statuses(),
                    data_root=str(config.data_root), path_mappings=[{"komga": m.komga, "local": str(m.local)}
                                                                   for m in config.path_mappings])
 
@@ -197,21 +452,34 @@ def metadata_save(series_id):
 
 @api.post("/metadata/<series_id>/search")
 def metadata_search(series_id):
-    body = body_with_keys({"title", "author", "isbn", "page"})
+    body = body_with_keys({"title", "author", "isbn", "page", "provider"})
     return jsonify(current_app.extensions["enrichment"].search(series_id, **body))
 
 
 @api.post("/metadata/<series_id>/source/preview")
 def source_preview(series_id):
-    body = body_with_keys({"search_id", "candidate_id", "fields", "unlink"})
+    body = body_with_keys({"search_id", "candidate_id", "fields", "unlink", "provider"})
     return jsonify(current_app.extensions["enrichment"].preview(series_id, **body))
 
 
 @api.post("/metadata/<series_id>/source")
 def source_save(series_id):
-    body = body_with_keys({"search_id", "candidate_id", "fields", "unlink", "revision", "base_fingerprint"},
+    body = body_with_keys({"search_id", "candidate_id", "fields", "unlink", "revision", "base_fingerprint", "provider"},
                           {"revision", "base_fingerprint"})
     return jsonify(current_app.extensions["enrichment"].save(series_id, **body))
+
+
+@api.post("/enrichment/batches")
+def enrichment_batch():
+    body = body_with_keys({"series_ids", "provider", "link_only"}, {"series_ids"})
+    job_id = current_app.extensions["auto_enrichment"].submit(**body)
+    return jsonify(current_app.extensions["state"].job(job_id)), 202
+
+
+@api.post("/enrichment/batches/<job_id>/apply")
+def apply_enrichment_batch(job_id):
+    body = body_with_keys({"confirm"}, {"confirm"})
+    return jsonify(current_app.extensions["auto_enrichment"].apply(job_id, body["confirm"]))
 
 
 def pagination():
@@ -263,8 +531,9 @@ def get_job_result(job_id):
     result = dict(job["result"])
     if "items" in result:
         limit, offset = pagination()
-        items = result["items"]
-        result.update(items=items[offset:offset + limit], total_items=len(items), limit=limit, offset=offset)
+        items = filtered_plan_items(result, request.args.get("state", ""), request.args.get("q", ""))
+        result.update(items=items[offset:offset + limit], total_items=len(result["items"]),
+                      filtered_items=len(items), limit=limit, offset=offset)
     return jsonify(result)
 
 

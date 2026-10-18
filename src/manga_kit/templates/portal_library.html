@@ -1,0 +1,86 @@
+{% import 'components.html' as ui %}
+{#- 表紙。画像が無いときは作品名入りの色付き表紙で同じ大きさを保つ。 -#}
+{% macro cover(src, item, number=0, pin='', small=false) -%}
+<div class="pv-cover{{ ' pv-cover-sm' if small else '' }}">{% if src %}<img src="{{ src }}" alt="" loading="lazy" decoding="async">{% else %}{{ ui.cover(item, number) }}{% endif %}{% if pin %}<span class="pin">{{ pin }}</span>{% endif %}</div>
+{%- endmacro %}
+
+{% macro rail_card(href, src, item, number, title, sub, pin='') -%}
+<a class="rail-card" href="{{ href }}">{{ cover(src, item, number, pin) }}<span class="body"><span class="t">{{ title }}</span>{% if sub and sub != title %}<span class="s">{{ sub }}</span>{% endif %}</span></a>
+{%- endmacro %}
+
+{% macro completed_rail() -%}
+{% if completed %}<div class="rail">{% for row in completed %}{{ rail_card(url_for('tools.series', series_id=row.id), cover_url(row), row, loop.index0 + 2, row.title, '全' ~ row.books|length ~ '冊') }}{% endfor %}</div>
+{% else %}<p class="pv-empty">完結した作品はまだありません。</p>{% endif %}
+{%- endmacro %}
+
+{% macro heading(id, eyebrow, title, link=none, label='') -%}
+<div class="pv-head"><div><p class="eyebrow">{{ eyebrow }}</p><h2 id="{{ id }}">{{ title }}</h2></div>{% if link %}<a class="more" href="{{ link }}">{{ label }} {{ ui.icon('arrow', 14) }}</a>{% endif %}</div>
+{%- endmacro %}
+
+{% if section == 'completed' %}{{ completed_rail() }}{% else %}
+<template data-slot="portal-eyebrow">{{ anime.label ~ ' · 放送中 ' ~ anime.entries|length ~ '作品' if anime else 'ライブラリ' }}</template>
+<template data-slot="portal-stats">
+  <a href="{{ url_for('library.index', status='completed') }}"><span class="num">{{ stats.completed }}</span><span class="lbl">完結済み</span></a>
+  <span class="sep" aria-hidden="true"></span>
+  <a href="{{ url_for('tools.new_volumes', state='new') }}"><span class="num accent">{{ new_volumes|length }}</span><span class="lbl">新刊待ち</span></a>
+  <span class="sep" aria-hidden="true"></span>
+  <a href="{{ url_for('tools.anime') }}"><span class="num">{{ anime.owned_count if anime else '—' }}</span><span class="lbl">今期の原作</span></a>
+</template>
+<template data-slot="portal-feature">{% if pick %}
+  <article class="pv-feature">
+    {{ cover(pick.entry.image or cover_url(pick.row), pick.row, 1) }}
+    <div class="body">
+      <span class="label">今期のピック</span>
+      <h2 class="name">{{ pick.entry.title }}</h2>
+      <span class="meta">原作: {{ pick.row.title }}</span>
+      <span class="acts"><a class="button primary" href="{{ pick.url }}">読む</a><a class="button" href="{{ url_for('tools.anime') }}">今期一覧</a></span>
+    </div>
+  </article>
+{% endif %}</template>
+
+{{ ui.scan_notice(scan) }}
+
+<section aria-labelledby="portal-recent">
+  {{ heading('portal-recent', 'RECENTLY ADDED', '最近追加した漫画（未完・最新巻のみ）') }}
+  {% if recent %}<div class="rail">{% for item in recent %}{{ rail_card(url_for('tools.series', series_id=item.series.id), cover_url(item.series, item.book), item.series, loop.index0, item.series.title, added(item.created), (item.book.volume ~ '巻') if item.book.volume else '最新巻') }}{% endfor %}</div>
+  {% else %}<p class="pv-empty">連載中の作品に最近追加された巻はありません。</p>{% endif %}
+</section>
+
+<section aria-labelledby="portal-anime">
+  {{ heading('portal-anime', 'ON AIR', '今期アニメ × 持ってる原作', url_for('tools.anime'), '今期アニメ一覧') }}
+  {% if anime and anime.stale %}<p class="notice warning">{{ anime.label }}のままです。今期アニメの画面で更新してください。</p>{% endif %}
+  {% if anime_owned %}<div class="rail">{% for item in anime_owned %}{{ rail_card(url_for('tools.series', series_id=item.series_id), item.image or cover_url(rows.get(item.series_id)), rows.get(item.series_id) or item, loop.index0 + 1, item.title, item.matched_title, '原作あり') }}{% endfor %}</div>
+  {% elif anime %}<p class="pv-empty">今期（{{ anime.label }}）は原作を持っている作品がありませんでした。<a href="{{ url_for('tools.anime') }}">一覧を見る</a></p>
+  {% else %}<p class="pv-empty">まだデータがありません。<a href="{{ url_for('tools.anime') }}">今期アニメ</a>で「更新」を押すとここに表示されます。</p>{% endif %}
+</section>
+
+<section aria-labelledby="portal-completed">
+  <div class="pv-head"><div><p class="eyebrow">COMPLETED</p><h2 id="portal-completed">完結一気読み</h2></div>{% if completed %}<a class="more" href="{{ url_for('home.index') }}" data-portal-reroll>{{ ui.icon('refresh', 14) }}別のを引く</a>{% endif %}</div>
+  <div id="portal-completed-rail">{{ completed_rail() }}</div>
+</section>
+
+<section aria-labelledby="portal-new-volumes">
+  {{ heading('portal-new-volumes', 'NEW VOLUMES', '新刊が出てる手持ち', url_for('tools.new_volumes'), '新刊チェック一覧') }}
+  {% if new_volumes %}<div class="pv-list">
+    {% for item in new_volumes[:6] %}<div class="row">
+      {% set row = rows.get(item.series_id) %}{{ cover(cover_url(row), row or item, loop.index0, small=true) }}
+      <div class="body"><a class="t" href="{{ url_for('tools.series', series_id=item.series_id) }}">{{ item.title }}</a><span class="s">{{ item.local_max }}巻 → {{ item.latest }}巻</span></div>
+      <span class="label label-new">+{{ item.diff }}</span>
+      <div class="acts">{% if row %}<a class="button primary" href="{{ read_url(row) }}">読む</a>{% endif %}{% if item.store %}<a class="button" href="{{ item.store }}" target="_blank" rel="noopener noreferrer">楽天</a>{% endif %}</div>
+    </div>{% endfor %}
+    <p class="foot">全 {{ new_volumes|length }} シリーズで新刊あり{% if checked %}（最終チェック {{ checked }}）{% endif %}</p>
+  </div>
+  {% else %}<p class="pv-empty">新刊待ちのシリーズはありません。<a href="{{ url_for('tools.new_volumes') }}">新刊チェック</a>を実行すると更新されます。</p>{% endif %}
+</section>
+
+<section aria-labelledby="portal-picks">
+  {{ heading('portal-picks', "TODAY'S PICKS", '今日のおすすめ漫画', url_for('tools.discovery'), '作品をもっと探す') }}
+  {% if picks %}<div class="pv-rank">{% for item in picks %}
+    {% if item.owned %}<a href="{{ url_for('tools.series', series_id=item.series_id) }}">{% elif item.url %}<a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{% else %}<a href="{{ url_for('tools.discovery') }}">{% endif %}
+      <span class="no">{{ loop.index }}</span>{{ cover(item.image, item, loop.index0, small=true) }}
+      <span class="body"><span class="t">{{ item.title }}</span><span class="s">{{ item.author or item.teaser }}</span></span>
+      <span class="p">{{ '蔵書あり' if item.owned else '未所持' }}</span>
+    </a>{% endfor %}</div>
+  {% else %}<p class="pv-empty">まだデータがありません。<a href="{{ url_for('tools.discovery') }}">発見</a>で紹介記事を更新するとここに表示されます。</p>{% endif %}
+</section>
+{% endif %}

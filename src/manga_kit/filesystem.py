@@ -114,6 +114,25 @@ class LibraryFilesystem:
             finally:
                 os.close(fd)
 
+    def signature(self, relative):
+        """File identity from attributes only, for writes that never touch the bytes."""
+        with self.parent(relative) as (parent, name):
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+            try:
+                info = os.fstat(fd)
+            finally:
+                os.close(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_dev != self.identity["device"]:
+            raise ConfigError("通常ファイル以外・別ファイルシステムは対象にできません。")
+        return {"size": info.st_size, "inode": info.st_ino, "device": info.st_dev, "mtime_ns": info.st_mtime_ns,
+                "ctime_ns": info.st_ctime_ns, "mode": stat.S_IMODE(info.st_mode)}
+
+    def existing_signature(self, relative):
+        try:
+            return self.signature(relative)
+        except FileNotFoundError:
+            return None
+
     def existing(self, relative):
         try:
             return self.snapshot(relative)

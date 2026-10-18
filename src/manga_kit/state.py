@@ -83,6 +83,17 @@ class StateStore:
                         CREATE INDEX IF NOT EXISTS searches_by_library ON metadata_searches(namespace,cache_key);
                         CREATE TABLE IF NOT EXISTS metadata_requests (
                             provider TEXT PRIMARY KEY, next_allowed REAL NOT NULL);
+                        CREATE TABLE IF NOT EXISTS archive_metadata_cache (
+                            namespace TEXT NOT NULL, provider_key TEXT NOT NULL, path TEXT NOT NULL,
+                            signature TEXT NOT NULL, data TEXT NOT NULL,
+                            PRIMARY KEY(namespace,provider_key,path));
+                        CREATE TABLE IF NOT EXISTS normalization_files (
+                            namespace TEXT NOT NULL, path TEXT NOT NULL, data TEXT NOT NULL,
+                            PRIMARY KEY(namespace,path));
+                        CREATE TABLE IF NOT EXISTS tool_cache (
+                            namespace TEXT NOT NULL, key TEXT NOT NULL, data TEXT NOT NULL,
+                            updated TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
+                            PRIMARY KEY(namespace,key));
                     """)
                     conn.execute("BEGIN IMMEDIATE")
                     if "provenance" not in {row[1] for row in conn.execute("PRAGMA table_info(edits)")}:
@@ -175,6 +186,38 @@ class StateStore:
                          (self.namespace, operation_id, direction, json.dumps(result, ensure_ascii=False)))
         return result
 
+    def apply_operation_edits(self, operation_id, direction, changes, *, event_kind="metadata_import"):
+        """Replace several series' edits in one transaction, once per operation and direction.
+
+        Each change names the edit it expects; any later edit stops the whole batch.
+        """
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            saved = conn.execute("SELECT edits FROM operation_edits WHERE namespace=? AND operation_id=? AND direction=?",
+                                 (self.namespace, operation_id, direction)).fetchone()
+            if saved:
+                return json.loads(saved["edits"])
+            rows = conn.execute("SELECT * FROM edits WHERE namespace=?", (self.namespace,)).fetchall()
+            actual = {row["series_id"]: self._edit(row) for row in rows}
+            changed = [change for change in changes
+                       if actual.get(change["series_id"], {"fields": {}, "revision": 0}) != change["expected"]]
+            if changed:
+                raise StateConflict(f"計画後に{len(changed)}作品の作品情報が編集されました。上書きせず中止しました。")
+            result = {}
+            for change in changes:
+                fields, provenance = change["edit"]["fields"], change["edit"].get("provenance", {})
+                revision = change["expected"]["revision"] + 1
+                conn.execute("INSERT INTO edits(namespace,series_id,fields,revision,updated,provenance) VALUES(?,?,?,?,?,?) "
+                             "ON CONFLICT(namespace,series_id) DO UPDATE SET fields=excluded.fields,revision=excluded.revision,"
+                             "updated=excluded.updated,provenance=excluded.provenance",
+                             (self.namespace, change["series_id"], json.dumps(fields, ensure_ascii=False), revision,
+                              timestamp(), json.dumps(provenance, ensure_ascii=False)))
+                result[change["series_id"]] = {"fields": fields, "revision": revision, **({"provenance": provenance} if provenance else {})}
+            self._event(conn, event_kind, operation_id, {"series": len(changes), "direction": direction})
+            conn.execute("INSERT INTO operation_edits VALUES(?,?,?,?)",
+                         (self.namespace, operation_id, direction, json.dumps(result, ensure_ascii=False)))
+        return result
+
     def operation_edits(self, operation_id, direction="move"):
         with self.connection() as conn:
             row = conn.execute("SELECT edits FROM operation_edits WHERE namespace=? AND operation_id=? AND direction=?",
@@ -200,6 +243,27 @@ class StateStore:
             yield
         finally:
             os.close(fd)
+
+    @contextmanager
+    def tool_lock(self, name):
+        if name not in {"smart-shelves", "notifications", "inventory", "managed-normalization"}:
+            raise ConfigError("処理ロックの種類が不正です。")
+        if os.name != "posix":
+            raise ConfigError("この更新処理はPOSIX環境で利用してください。")
+        import fcntl
+        directory = self.path.parent / "tool-locks"
+        durable_mkdir(directory)
+        if directory.is_symlink() or not directory.resolve().is_relative_to(self.path.parent.resolve()):
+            raise ConfigError("処理ロックの保存先が不正です。")
+        descriptor = os.open(directory / (self.namespace + "-" + name), os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise StateConflict("同じ更新処理が実行中です。完了後に再実行してください。") from None
+            yield
+        finally:
+            os.close(descriptor)
 
     def _event(self, conn, kind, subject, detail):
         conn.execute("INSERT INTO events(namespace,kind,subject,created,detail) VALUES(?,?,?,?,?)",
@@ -251,6 +315,66 @@ class StateStore:
             rows = conn.execute("SELECT * FROM jobs WHERE namespace=? ORDER BY created DESC,id DESC LIMIT ? OFFSET ?",
                                 (self.namespace, limit, offset)).fetchall()
         return [self._job(row) for row in rows]
+
+    def latest_preview(self):
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE namespace=? AND kind='preview' AND status='succeeded' "
+                               "ORDER BY created DESC,id DESC LIMIT 1", (self.namespace,)).fetchone()
+        return self._job(row, include_result=True) if row else None
+
+    def normalization_files(self):
+        with self.connection() as connection:
+            rows = connection.execute("SELECT path,data FROM normalization_files WHERE namespace=?", (self.namespace,)).fetchall()
+        return {row["path"]: json.loads(row["data"]) for row in rows}
+
+    def cached(self, key):
+        with self.connection() as connection:
+            row = connection.execute("SELECT data,updated,revision FROM tool_cache WHERE namespace=? AND key=?",
+                                     (self.namespace, key)).fetchone()
+        return {"data": json.loads(row["data"]), "updated": row["updated"], "revision": row["revision"]} if row else None
+
+    def cache(self, key, data, *, revision=None):
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT revision FROM tool_cache WHERE namespace=? AND key=?", (self.namespace, key)).fetchone()
+            actual = row[0] if row else 0
+            if revision is not None and revision != actual:
+                raise StateConflict("別の操作で更新されました。画面を読み直してください。")
+            connection.execute("INSERT INTO tool_cache VALUES(?,?,?,?,?) ON CONFLICT(namespace,key) DO UPDATE SET "
+                               "data=excluded.data,updated=excluded.updated,revision=excluded.revision",
+                               (self.namespace, key, json.dumps(data, ensure_ascii=False), timestamp(), actual + 1))
+        return actual + 1
+
+    def cached_keys(self, prefix):
+        with self.connection() as connection:
+            rows = connection.execute("SELECT key FROM tool_cache WHERE namespace=? AND substr(key,1,?)=? ORDER BY key",
+                                      (self.namespace, len(prefix), prefix)).fetchall()
+        return [row[0] for row in rows]
+
+    def cached_revision(self, key):
+        with self.connection() as connection:
+            row = connection.execute("SELECT revision FROM tool_cache WHERE namespace=? AND key=?", (self.namespace, key)).fetchone()
+        return row[0] if row else 0
+
+    def cached_prefix(self, prefix):
+        with self.connection() as connection:
+            rows = connection.execute("SELECT key,data,updated,revision FROM tool_cache WHERE namespace=? AND substr(key,1,?)=? ORDER BY key",
+                                      (self.namespace, len(prefix), prefix)).fetchall()
+        return {row["key"]: {"data": json.loads(row["data"]), "updated": row["updated"], "revision": row["revision"]} for row in rows}
+
+    def remember_normalization(self, values, removed=()):
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.executemany("INSERT INTO normalization_files VALUES(?,?,?) ON CONFLICT(namespace,path) DO UPDATE SET data=excluded.data",
+                                   [(self.namespace, path, json.dumps(value, sort_keys=True)) for path, value in values.items()])
+            connection.executemany("DELETE FROM normalization_files WHERE namespace=? AND path=?",
+                                   [(self.namespace, path) for path in removed])
+
+    def latest_normalization(self):
+        with self.connection() as connection:
+            row = connection.execute("SELECT * FROM jobs WHERE namespace=? AND kind='normalization_check' "
+                                     "ORDER BY created DESC,id DESC LIMIT 1", (self.namespace,)).fetchone()
+        return self._job(row, include_result=True) if row else None
 
     def recover(self):
         # A single application process owns workers. Never interrupt a living process.

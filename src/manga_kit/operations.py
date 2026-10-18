@@ -22,6 +22,11 @@ from .state import StateConflict, StateStore, timestamp
 from .organizer import plan_organization
 
 
+# Komga 1.29 local artwork: LocalArtworkProvider supported names and extensions.
+SERIES_ARTWORK = {"cover", "default", "folder", "poster", "series"}
+ARTWORK_EXTENSIONS = {"png", "jpeg", "jpg", "tbn", "webp", "gif"}
+
+
 def series_id(path):
     return hashlib.sha256(path.encode()).hexdigest()[:16]
 
@@ -33,7 +38,8 @@ def digest(value):
 class OperationService:
     kind = "organize"
     def __init__(self, settings, store=None, client=None):
-        self.settings = settings.validate_storage()
+        settings.validate_storage()
+        self.settings = settings
         self.store = store or StateStore(settings)
         self.library = LibraryService(settings, store=self.store)
         self.guard = KomgaMoveGuard(settings, client or KomgaClient(settings))
@@ -117,6 +123,8 @@ class OperationService:
         pending = operation.get("temporary_files", {})
         field = "target" if self.kind == "conversion" else "source"
         parents = {PurePosixPath(entry[field]).parent for entry in operation["plan"]["entries"]}
+        if self.kind == "normalize":
+            parents.update(PurePosixPath(entry["target"]).parent for entry in operation["plan"]["entries"])
         prefix = ".manga-kit-restore-" + operation["plan"]["id"] + "-"
         for path, expected in pending.items():
             parsed = PurePosixPath(path)
@@ -173,6 +181,43 @@ class OperationService:
         return operation
 
     @staticmethod
+    def _companions(fs, source, target, items, series):
+        """Plan Komga local artwork next to the books; report other files that stay."""
+        books = {PurePosixPath(item["source"]).name: PurePosixPath(item["target"]).stem for item in items}
+        nested = {PurePosixPath(entry.path).relative_to(source).parts[0] for entry in series
+                  if entry.path != source and PurePosixPath(entry.path).is_relative_to(source)}
+        artwork, retained = [], []
+        with fs.parent(str(PurePosixPath(source) / "__manga_kit_probe__")) as (fd, _):
+            names = sorted(os.listdir(fd))
+            kinds = {name: os.stat(name, dir_fd=fd, follow_symlinks=False).st_mode for name in names}
+        for name in names:
+            if name in books or name == "series.json" or name in nested:
+                continue
+            path = PurePosixPath(name)
+            if not stat.S_ISREG(kinds[name]) or path.suffix[1:].lower() not in ARTWORK_EXTENSIONS:
+                retained.append(name)
+                continue
+            # Komga 1.29 matches series artwork by name and book artwork by the
+            # book's name with an optional -N suffix, both case-insensitively.
+            matches = [("", None)] if path.stem.casefold() in SERIES_ARTWORK else []
+            for book, renamed in books.items():
+                match = re.fullmatch(re.escape(PurePosixPath(book).stem) + r"(-[0-9]+)?", path.stem, re.IGNORECASE)
+                if match:
+                    matches.append((match[1] or "", renamed))
+            if not matches:
+                retained.append(name)
+                continue
+            if len(matches) > 1:
+                raise StateConflict(f"補助画像 {name} の対応する書庫を一意に判定できません。名前を確認してください。")
+            suffix, renamed = matches[0]
+            relative = str(PurePosixPath(source) / name)
+            destination = str(PurePosixPath(target) / (name if renamed is None else renamed + suffix + path.suffix))
+            if destination != relative:
+                artwork.append({"source": relative, "target": destination, "kind": "artwork",
+                                "snapshot": fs.snapshot(relative)})
+        return artwork, retained
+
+    @staticmethod
     def _empty_target(fs, group):
         if group["source"] == group["target"]:
             return
@@ -184,7 +229,7 @@ class OperationService:
         except FileNotFoundError:
             pass
 
-    def prepare(self, layout=None, selected=None):
+    def prepare(self, layout=None, selected=None, *, archives=None):
         if layout is not None and not isinstance(layout, dict):
             raise ConfigError("整理ルールはマッピングで指定してください。")
         rules = self.settings.layout.with_overrides(layout or {})
@@ -196,8 +241,18 @@ class OperationService:
             if selected:
                 if set(selected) - {entry.id for entry in series}:
                     raise ConfigError("指定した作品が見つかりません。")
-                series = [entry for entry in series if entry.id in selected]
-            preview = plan_organization(series, rules, self.settings.library_root)
+                chosen = [PurePosixPath(entry.path) for entry in series if entry.id in selected]
+                # Series folders nested in a selected folder move with it.
+                series = [entry for entry in series
+                          if any(PurePosixPath(entry.path).is_relative_to(path) for path in chosen)]
+            preview = plan_organization(series, rules, self.settings.library_root, context=scanned.series,
+                                        normalize=self.kind == "normalize")
+            if archives:
+                for item in preview["items"]:
+                    if item["source"] in archives and item["state"] == "unchanged":
+                        item["state"] = "ready"
+                preview["counts"] = {state: sum(item["state"] == state for item in preview["items"])
+                                     for state in ("ready", "unchanged", "blocked")}
             if preview["counts"]["blocked"] or not preview["counts"]["ready"]:
                 raise ConfigError("要確認項目がない、変更を含むプレビューを作成してください。")
             entries, groups, destinations = [], [], set()
@@ -220,11 +275,20 @@ class OperationService:
                 for item in items:
                     entries.append({"source": item["source"], "target": item["target"], "kind": "book",
                                     "snapshot": fs.snapshot(item["source"])})
+                    if archives and item["source"] in archives:
+                        entries[-1]["archive"] = archives[item["source"]]
                 sidecar = str(PurePosixPath(entry.path) / "series.json")
                 existing = fs.existing(sidecar)
                 if existing:
                     entries.append({"source": sidecar, "target": str(PurePosixPath(target) / "series.json"),
                                     "kind": "sidecar", "snapshot": existing})
+                artwork, group["retained"] = self._companions(fs, entry.path, target, items, series)
+                entries.extend(artwork)
+            seen = defaultdict(list)
+            for item in entries:
+                seen[unicodedata.normalize("NFKC", item["target"]).casefold()].append(item)
+            if any(len(matches) > 1 for matches in seen.values()):
+                raise StateConflict("補助画像の整理先が書庫や別の画像と重なります。名前を確認してください。")
             edits = self.store.edits()
             expected = {key: edits.get(key, {"fields": {}, "revision": 0}) for group in groups
                         for key in (group["source_id"], group["target_id"])}
@@ -287,7 +351,7 @@ class OperationService:
                 sync_file(target)
             sync_directory(backup)
             self._forward_check(fs, operation)
-            job_id = self.store.create_job("organize")
+            job_id = self.store.create_job("normalize" if self.kind == "normalize" else "organize")
             operation.update(status="running", job_id=job_id)
             self._save(operation)
             self.store.update_job(job_id, status="running", total=len(entries))

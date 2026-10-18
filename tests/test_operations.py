@@ -54,6 +54,26 @@ class OperationTests(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 OperationService(settings).prepare()
 
+    def test_mixed_padded_suffix_and_v_marker_move_restore_preserve_files(self):
+        self.service.library.providers = []
+        (self.series_folder / '原稿 第1巻.cbz').rename(self.series_folder / 'sample_series_01.zip')
+        (self.series_folder / '原稿 第2巻.cbz').rename(self.series_folder / 'sample_series v02.zip')
+        before = self.files()
+        operation, operation_id, confirmation = self.prepare()
+        self.assertEqual([book.volume for book in self.service.library.scan().series[0].books], ['2', '1'])
+        self.service.execute(operation_id, confirmation)
+        self.service.restore(operation_id, confirmation)
+        self.assertEqual(self.files(), before)
+
+    def test_padded_suffix_and_explicit_marker_collision_is_not_executed(self):
+        self.service.library.providers = []
+        (self.series_folder / '原稿 第1巻.cbz').rename(self.series_folder / 'sample_series_01.zip')
+        (self.series_folder / '原稿 第2巻.cbz').rename(self.series_folder / 'sample_series v01.zip')
+        before = self.files()
+        with self.assertRaises(ConfigError):
+            self.prepare()
+        self.assertEqual(self.files(), before)
+
     def test_move_sidecar_edits_and_restore_preserve_every_byte_mode_and_time(self):
         before = self.files()
         entry = self.service.library.scan().series[0]
@@ -69,6 +89,73 @@ class OperationTests(unittest.TestCase):
         self.assertEqual(self.service.library.scan(refresh=True).series[0].author, '編集した著者')
         self.assertEqual(self.service.inspect(operation_id)['status'], 'restored')
         self.assertEqual([j['status'] for j in self.service.store.jobs()], ['succeeded', 'succeeded'])
+
+    def add_book(self, folder, name, volume):
+        folder.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(folder / name, 'w') as out:
+            out.writestr('ComicInfo.xml', f'<ComicInfo><Number>{volume}</Number></ComicInfo>')
+            out.writestr('0001.png', f'fictitious {folder.name} {volume}'.encode())
+
+    def test_nested_series_and_komga_artwork_move_together_and_restore(self):
+        child = self.series_folder / '外伝'
+        self.add_book(child, '外伝 第1巻.cbz', 1)
+        (child / 'Poster.PNG').write_bytes(b'child poster')
+        (self.series_folder / 'cover.jpg').write_bytes(b'series cover')
+        (self.series_folder / '原稿 第1巻.jpg').write_bytes(b'book one')
+        (self.series_folder / '原稿 第1巻-2.WEBP').write_bytes(b'book one alternate')
+        (self.series_folder / '原稿 第2巻.txt').write_bytes(b'not artwork')
+        (self.series_folder / 'notes.pdf').write_bytes(b'kept')
+        before = self.files()
+        parent_id = next(s.id for s in self.service.library.scan(refresh=True).series if s.path == '連載中/[作者] 作品')
+        # Selecting only the parent also plans its nested series.
+        op = self.service.prepare(selected=[parent_id])
+        moves = {entry['source']: entry['target'] for entry in op['plan']['entries']}
+        base = '完結/さ/[作者] 作品'
+        self.assertEqual(moves['連載中/[作者] 作品/外伝/外伝 第1巻.cbz'], base + '/外伝/外伝 第01巻.cbz')
+        self.assertEqual(moves['連載中/[作者] 作品/外伝/Poster.PNG'], base + '/外伝/Poster.PNG')
+        self.assertEqual(moves['連載中/[作者] 作品/cover.jpg'], base + '/cover.jpg')
+        self.assertEqual(moves['連載中/[作者] 作品/原稿 第1巻.jpg'], base + '/作品 第01巻.jpg')
+        self.assertEqual(moves['連載中/[作者] 作品/原稿 第1巻-2.WEBP'], base + '/作品 第01巻-2.WEBP')
+        parent_group = next(group for group in op['plan']['groups'] if group['source'] == '連載中/[作者] 作品')
+        self.assertEqual(parent_group['retained'], ['notes.pdf', '原稿 第2巻.txt'])
+        self.service.execute(op['plan']['id'], op['digest'])
+        after = self.files()
+        self.assertIn(base + '/外伝/外伝 第01巻.cbz', after)
+        self.assertIn(base + '/作品 第01巻-2.WEBP', after)
+        self.assertEqual(set(p for p in after if p.startswith('連載中/')),
+                         {'連載中/[作者] 作品/notes.pdf', '連載中/[作者] 作品/原稿 第2巻.txt'})
+        self.service.restore(op['plan']['id'], op['digest'])
+        self.assertEqual(self.files(), before)
+
+    def test_ambiguous_or_colliding_artwork_is_not_planned(self):
+        # Two case variants would collide at the renamed destination.
+        (self.series_folder / '原稿 第1巻.jpg').write_bytes(b'one')
+        (self.series_folder / '原稿 第1巻.JPG').write_bytes(b'same name in another case')
+        before = self.files()
+        with self.assertRaises(StateConflict):
+            self.prepare()
+        self.assertEqual(self.files(), before)
+        (self.series_folder / '原稿 第1巻.JPG').unlink()
+        # cover.png is both series artwork and the artwork of cover.cbz.
+        self.add_book(self.series_folder, 'cover.cbz', 3)
+        (self.series_folder / 'cover.png').write_bytes(b'series or book artwork')
+        before = self.files()
+        with self.assertRaises(StateConflict):
+            self.prepare()
+        self.assertEqual(self.files(), before)
+
+    def test_retained_files_over_one_hundred_are_fully_recorded_and_preserved(self):
+        names = [f'note-{number:03}.txt' for number in range(105)]
+        for name in names:
+            (self.series_folder / name).write_text('fictitious notes')
+        before = self.files()
+        op, operation_id, confirmation = self.prepare()
+        self.assertEqual(op['plan']['groups'][0]['retained'], names)
+        self.assertEqual(self.service.inspect(operation_id)['plan']['groups'][0]['retained'], names)
+        self.service.execute(operation_id, confirmation)
+        self.assertTrue(all((self.series_folder / name).is_file() for name in names))
+        self.service.restore(operation_id, confirmation)
+        self.assertEqual(self.files(), before)
 
     def test_confirmation_and_modified_manifest_are_rejected(self):
         before = self.files()

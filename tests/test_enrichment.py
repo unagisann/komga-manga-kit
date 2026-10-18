@@ -32,7 +32,8 @@ def response_data():
         {'title': '架空の物語（1）', 'titleKana': 'カクウノモノガタリ 1', 'author': '架空作者',
          'publisherName': 'テスト出版', 'isbn': '9780000000019',
          'itemUrl': 'https://books.rakuten.co.jp/rb/1234567/?tracking=discard',
-         'itemCaption': 'This unrequested description must not be retained', 'itemPrice': 1000}]}
+         'itemCaption': 'シリーズ累計100万部突破！\n架空の町に暮らす少女が、失われた物語の断片を集めながら仲間と出会い、町の秘密に近づいていく長編ファンタジー。\n【電子限定特典付き】',
+         'salesDate': '2024年04月01日', 'booksGenreId': '001001001', 'itemPrice': 1000}]}
 
 
 def http_response(data=None, status=200, chunks=None):
@@ -69,14 +70,65 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(kwargs['params']['applicationId'], 'private-application-id')
         self.assertNotIn('accessKey', kwargs['params'])
         self.assertEqual(kwargs['params']['hits'], 10)
-        self.assertEqual(kwargs['params']['size'], 9)
+        # Genre 001001 covers manga in every format, including manga bunko.
+        self.assertEqual(kwargs['params']['booksGenreId'], '001001')
+        self.assertNotIn('size', kwargs['params'])
+        self.assertIn('itemCaption', kwargs['params']['elements'])
+        self.assertNotIn('itemPrice', kwargs['params']['elements'])
         item = result['candidates'][0]
-        self.assertEqual(item['fields']['title'], '架空の物語（1）')
-        self.assertEqual(item['fields']['reading'], 'かくうのものがたり 1')
+        self.assertEqual(item['title'], '架空の物語（1）')
+        self.assertEqual((item['volume'], item['sales_date']), ('1', '2024年04月01日'))
+        self.assertEqual(item['fields']['title'], '架空の物語')
+        self.assertEqual(item['fields']['reading'], 'かくうのものがたり')
+        self.assertEqual(item['fields']['genres'], ['少年'])
+        self.assertTrue(item['fields']['summary'].startswith('架空の町に暮らす少女が'))
         self.assertEqual(item['url'], 'https://books.rakuten.co.jp/rb/1234567/')
-        self.assertEqual(set(item['fields']), {'title', 'reading', 'author', 'publisher'})
+        self.assertEqual(set(item['fields']), {'title', 'reading', 'author', 'publisher', 'summary', 'genres'})
         self.assertNotIn('private-', json.dumps(result))
-        self.assertNotIn('unrequested', json.dumps(result))
+        self.assertNotIn('累計', json.dumps(result, ensure_ascii=False))
+        self.assertNotIn('特典', json.dumps(result, ensure_ascii=False))
+        self.assertNotIn('itemPrice', json.dumps(result))
+
+    def test_product_titles_captions_and_genres_become_series_candidates(self):
+        from manga_kit.catalogs import caption_summary, readership, series_reading, split_volume
+        for title, expected in [('架空の物語（12）', ('架空の物語', '12')), ('架空の物語！（3）', ('架空の物語！', '3')),
+                                ('架空の物語　7', ('架空の物語', '7')), ('架空の物語 第４巻', ('架空の物語', '4')),
+                                ('架空の物語 20 (架空コミックス)', ('架空の物語', '20')), ('架空13', ('架空13', None)),
+                                ('架空13 2', ('架空13', '2')), ('架空の物語 （特装版）', ('架空の物語', None)),
+                                ('（1）', ('（1）', None))]:
+            with self.subTest(title=title):
+                self.assertEqual(split_volume(title), expected)
+        self.assertEqual(series_reading('カクウ ノ モノガタリ 3'), 'カクウノモノガタリ')
+        self.assertEqual(series_reading('KAKUU ノ MONOGATARI'), 'KAKUU ノ MONOGATARI')
+        story = '架空の町に暮らす少女が、失われた物語の断片を集めながら仲間と出会い、町の秘密に近づいていく。'
+        self.assertEqual(caption_summary('大好評発売中！\n' + story + '\n※電子版には特典が付きます'), story)
+        self.assertEqual(caption_summary('完全版で登場！全10巻'), '')
+        self.assertTrue(len(caption_summary(story * 20)) <= 401)
+        self.assertEqual(readership('001001003/001001003001'), ['青年'])
+        self.assertEqual(readership('001001001/001001002'), [])
+        self.assertEqual(readership('001001006'), [])
+        for key, value in (('booksGenreId', '001001;drop'), ('salesDate', 7), ('itemCaption', 'x' * 20001)):
+            data = response_data()
+            data['Items'][0][key] = value
+            with self.subTest(key=key), self.assertRaises(CatalogError):
+                RakutenBooks.parse(data, 1)
+
+    def test_subtitles_and_unknown_parentheses_survive_volume_and_label_cleanup(self):
+        from manga_kit.catalogs import series_reading, split_volume
+        for title in ('架空作品（続編）', '架空作品（仮）', '架空作品（Side Story）',
+                      '架空作品（文庫の物語）', '架空作品（架空コミックス）', '架空作品 2 （続編）'):
+            with self.subTest(title=title):
+                self.assertEqual(split_volume(title), (title, None))
+        for title in ('架空作品（続編） 2', '架空作品（続編） 第２巻 （架空コミックス）',
+                      '架空作品（続編）（2） （架空コミックス） （特装版）'):
+            with self.subTest(title=title):
+                self.assertEqual(split_volume(title), ('架空作品（続編）', '2'))
+        self.assertEqual(series_reading('カクウ サクヒン（ゾクヘン）'), 'カクウサクヒン（ゾクヘン）')
+        data = response_data()
+        data['Items'][0].update(title='架空作品（続編）', titleKana='カクウサクヒン（ゾクヘン）')
+        candidate = RakutenBooks.parse(data, 1)['candidates'][0]
+        self.assertEqual(candidate['fields']['title'], '架空作品（続編）')
+        self.assertEqual(candidate['fields']['reading'], 'かくうさくひん(ぞくへん)')
 
     def test_disabled_or_missing_credentials_never_contact_provider(self):
         with patch('requests.Session.get', side_effect=AssertionError('Network called')):
@@ -190,7 +242,10 @@ class EnrichmentTests(unittest.TestCase):
     def test_selected_fields_provenance_and_history_persist_without_media_changes(self):
         before = self.files()
         body, preview = self.proposal()
-        self.assertEqual(preview['provenance']['adjusted_fields'], ['reading'])
+        # The series reading already omits 楽天's volume number, so nothing was adjusted.
+        self.assertEqual(preview['provenance']['adjusted_fields'], [])
+        _, adjusted = self.proposal({'publisher': '調整した出版'})
+        self.assertEqual(adjusted['provenance']['adjusted_fields'], ['publisher'])
         self.assertEqual(self.store.edits(), {})
         saved = self.service.save(self.series.id, **body)
         self.assertEqual(saved['series']['title'], self.series.title)
@@ -222,6 +277,20 @@ class EnrichmentTests(unittest.TestCase):
         with self.assertRaises(StateConflict):
             demo_service.preview(self.series.id, **body)
 
+    def test_old_search_cache_is_refetched_and_old_candidate_cannot_be_adopted(self):
+        first = self.service.search(self.series.id, title='作品')
+        old_key = hashlib.sha256(json.dumps([self.provider.id, first['query']], sort_keys=True).encode()).hexdigest()
+        with self.store.connection() as connection:
+            connection.execute('UPDATE metadata_searches SET cache_key=? WHERE id=?', (old_key, first['search_id']))
+        body = {'search_id': first['search_id'], 'candidate_id': first['candidates'][0]['id'], 'fields': {}}
+        with self.assertRaises(StateConflict):
+            self.service.preview(self.series.id, **body)
+        refreshed = self.service.search(self.series.id, title='作品')
+        self.assertFalse(refreshed['cached'])
+        self.assertNotEqual(refreshed['search_id'], first['search_id'])
+        self.assertEqual(self.provider.search.call_count, 2)
+        self.assertEqual(self.store.edits(), {})
+
     def test_expired_candidate_cannot_be_reviewed_or_saved_and_search_refreshes(self):
         body, _ = self.proposal()
         with self.store.connection() as connection:
@@ -241,7 +310,7 @@ class EnrichmentTests(unittest.TestCase):
 
     def test_forged_candidate_and_fields_cannot_change_source_attribution(self):
         body, _ = self.proposal()
-        for values in ({'candidate_id': 'missing'}, {'fields': {'summary': 'Not offered by this provider'}},
+        for values in ({'candidate_id': 'missing'}, {'fields': {'tags': ['Not offered by this provider']}},
                        {'fields': {'status': 'completed'}}, {'fields': []}, {'search_id': '../outside'}, {'unlink': 'yes'}):
             with self.subTest(values=values), self.assertRaises(ConfigError):
                 self.service.preview(self.series.id, **{key: value for key, value in {**body, **values}.items()

@@ -1,0 +1,6 @@
+{% extends 'base.html' %}{% import 'components.html' as ui %}
+{% block title %}表紙・ページ修正{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">PAGES</p><h1>表紙・ページ修正</h1><p>表紙の選択、ページの並べ替え、不要ページの削除を確認して実行します。</p></div></div><a class="button" href="{{ url_for('maintenance.page_trash') }}">履歴・ゴミ箱</a><form class="filter-panel" method="get"><input name="q" value="{{ query }}" aria-label="作品を検索"><button class="button">検索</button></form>
+<div class="source-results section">{% for item in rows %}<article class="panel"><h2>{{ item.series.title }} {{ item.book.volume }}巻</h2><p>{{ {'review':'要確認','hold':'保留','done':'確認済み','unmarked':'未確認'}.get(marks.get('pages:mark:' ~ item.book.id,{}).get('data',{}).get('status','unmarked')) }}</p><a class="button" href="{{ url_for('maintenance.edit_pages',book_id=item.book.id) }}">ページを確認</a></article>{% else %}<p>該当する書庫がありません。</p>{% endfor %}</div>{{ ui.pagination(pagination,'冊') }}
+{% endblock %}

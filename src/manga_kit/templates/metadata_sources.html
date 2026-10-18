@@ -1,20 +1,23 @@
 {% extends 'base.html' %}{% import 'components.html' as ui %}
 {% block title %}{{ series.title }}の補完候補{% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='enrichment.js') }}" defer></script>{% endblock %}
+{% block scripts %}<script src="{{ asset_url('enrichment.js') }}" defer></script>{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">METADATA SOURCES</p><h1>作品情報を補完</h1><p>{{ series.title }} · {{ series.author or '著者未設定' }}</p></div><a class="button" href="{{ url_for('metadata.metadata_detail', series_id=series.id) }}">作品情報へ戻る</a></div>
-<div id="enrichment" data-series-id="{{ series.id }}" data-current="{{ series|tojson|forceescape }}">
-  <div class="notice">{{ '架空の書誌データで検索・差分確認・保存を試せます。外部サービスへは通信しません。' if catalog.provider == 'demo' else '入力した作品名・著者・ISBNを楽天Booksへ送信します。代表巻の書誌情報を確認して、この本棚の作品情報へ反映します。' }}</div>
-  {% if not catalog.configured %}<div class="notice warning">楽天Booksの認証情報が未設定です。<a href="/settings">設定画面</a>の案内を確認してください。</div>{% endif %}
-  {% if provenance %}<section class="panel section"><div class="panel-heading"><h2>現在の対応付け</h2><button class="button" id="source-unlink" type="button">対応付けを解除</button></div><p>{{ '楽天Books' if provenance.provider == 'rakuten_books' else '架空の書誌データ' }} · {{ provenance.item_id }}{% if provenance.url %} · <a href="{{ provenance.url }}" target="_blank" rel="noopener noreferrer">情報源を見る</a>{% endif %}</p><p class="form-hint">取得 <time class="local-time" datetime="{{ provenance.retrieved_at }}">{{ provenance.retrieved_at }}</time></p><p class="form-hint">解除しても保存した作品情報は残ります。別の候補を選んで対応を修正することもできます。</p></section>{% endif %}
-  <section class="panel rule-panel section"><div class="panel-heading"><h2>{{ catalog.label }}で探す</h2><span class="chip">書誌情報</span></div>
-    <form id="source-search" class="source-search">
+<div class="page-heading"><div><p class="eyebrow">CANDIDATE REVIEW</p><h1>補完候補を個別に確認</h1><p>{{ series.title }} · {{ series.author or '著者未設定' }}</p></div><a class="button" href="{{ return_url }}">自動補完へ戻る</a></div>
+<nav class="source-pages section" aria-label="補完する情報源">{% for key, source in catalogs.items() %}<a class="button{{ ' primary' if key == catalog.key else '' }}" href="{{ url_for('metadata.metadata_sources', series_id=series.id, provider=key) }}" {% if key == catalog.key %}aria-current="page"{% endif %}>{{ 'タグ・ジャンル · AniList' if key == 'anilist' else '書誌情報 · ' + source.label }}</a>{% endfor %}</nav>
+<div id="enrichment" data-series-id="{{ series.id }}" data-provider="{{ catalog.key }}" data-current="{{ series|tojson|forceescape }}" data-return-url="{{ return_url }}">
+  <div class="notice">{% if settings.demo %}架空データで検索・差分確認・保存を試せます。外部サービスへは通信しません。{% elif catalog.key == 'anilist' %}入力した作品名をAniListへ送信します。同名の別作品でないことを確認し、タグ・ジャンルをこの本棚へ保存します。{% else %}入力した作品名・著者を{{ catalog.label }}へ送信します。代表巻の書誌情報を確認して、この本棚の作品情報へ反映します。{% endif %}</div>
+  {% if not catalog.configured %}<div class="notice warning">{{ catalog.label }}は未設定です。<a href="/settings">設定画面</a>の案内を確認してください。</div>{% endif %}
+  {% if provenance %}<section class="panel section"><div class="panel-heading"><h2>現在の対応付け</h2><button class="button" id="source-unlink" type="button">対応付けを解除</button></div><p>{{ provider_labels.get(provenance.provider, provenance.provider) }} · {{ provenance.item_id }}{% if provenance.url %} · <a href="{{ provenance.url }}" target="_blank" rel="noopener noreferrer">情報源を見る</a>{% endif %}</p><p class="form-hint">取得 <time class="local-time" datetime="{{ provenance.retrieved_at }}">{{ provenance.retrieved_at }}</time></p>{{ ui.source_identity(provenance) }}<p class="form-hint">解除しても保存した作品情報は残ります。別の候補を選んで対応を修正することもできます。</p></section>{% endif %}
+  <section class="panel rule-panel section"><div class="panel-heading"><h2>{{ catalog.label }}で探す</h2><span class="chip">{{ 'タグ・ジャンル' if catalog.key == 'anilist' else '書誌情報' }}</span></div>
+    <form id="source-search" class="source-search{{ ' source-search-classifications' if catalog.key == 'anilist' else '' }}">
       <label>作品名<input name="title" value="{{ series.title }}" maxlength="200"></label>
-      <label>著者<input name="author" value="{{ series.author }}" maxlength="200"></label>
-      <label>ISBN（13桁・任意）<input name="isbn" maxlength="30" inputmode="numeric" placeholder="入力した場合はISBNで検索"></label>
+      {% if catalog.key != 'anilist' %}<label>著者<input name="author" value="{{ series.author }}" maxlength="200"></label>
+      {% if catalog.key == 'rakuten_books' %}<label>ISBN（13桁・任意）<input name="isbn" maxlength="30" inputmode="numeric" placeholder="入力した場合はISBNで検索"></label>{% endif %}
+      {% endif %}
       <button class="button primary" type="submit" {% if not catalog.configured %}disabled{% endif %}>{{ ui.icon('search', 17) }}候補を検索</button>
     </form>
-    <p class="form-hint">巻数・新装版・著者を確認して代表巻を選んでください。結果は1時間再利用し、取得日時を表示します。</p>
+    {% if known_titles|length > 1 %}<div class="source-pages" aria-label="確認済みの別名から検索語を選ぶ"><span class="form-hint">確認済みの別名:</span>{% for title in known_titles if title != series.title %}<button class="button source-alias" type="button" data-title="{{ title }}" {% if not catalog.configured or title|length > 200 %}disabled{% endif %}>{{ title }}</button>{% endfor %}</div><p class="form-hint">別名を選ぶと作品名の検索語が変わります。「候補を検索」でその名前を送信します。</p>{% endif %}
+    <p class="form-hint">{% if catalog.key == 'anilist' %}別表記・初出年・情報源の作品ページを確認してください。タグ・ジャンルは同梱の対訳表で日本語にし、読者層（少年・青年など）はジャンルに含めます。成人向け・関連度の低いタグ、ネタバレ指定・判定不明のタグは除外します。{% else %}漫画（文庫判を含む）から検索します。出版社とレーベルは別々に表示します。巻数・新装版・著者を確認し、あらすじを使う場合は第1巻を代表巻に選んでください。{% endif %}照合理由を表示しますが、自動対応付けは行いません。要確認の候補は採用項目を自分で選びます。結果は1時間再利用し、取得日時を表示します。</p>
     <p id="source-search-message" role="status">検索すると候補が表示されます。</p>
     <div id="source-results" class="source-results"></div>
     <div id="source-pages" class="source-pages" hidden><button class="button" id="source-prev" type="button">前へ</button><span id="source-page-label"></span><button class="button" id="source-next" type="button">次へ</button></div>
@@ -23,13 +26,15 @@
   <section id="source-selection" class="panel section" hidden>
     <div class="panel-heading"><h2 id="source-selected-title">採用する項目</h2><span class="chip" id="source-selected-provider"></span></div>
     <p id="source-reference"></p>
-    <p class="form-hint">必要な項目にチェックを入れ、作品単位の情報へ修正できます。巻数付きの作品名・読みにはご注意ください。</p>
+    <div id="source-selection-match"></div>
+    <p class="form-hint">{% if catalog.key == 'anilist' %}ジャンルとタグを個別に選択し、1行に1項目で調整できます。採用した項目は現在の一覧を置き換えます。残す項目も入力してください。{% else %}必要な項目にチェックを入れ、作品単位の情報へ修正できます。作品名・読みの末尾の巻数は除き、あらすじは商品説明から販促の行を除いた候補です。読者層は楽天のジャンル、または読者層が明記されたレーベルから一意に判定できた場合だけ表示します。両者が矛盾する場合は提案しません。採用すると現在のジャンル一覧を置き換えます。{% endif %}</p>
     <form id="source-fields"><div id="source-field-list" class="source-field-list"></div><button class="button primary" type="submit">採用内容を確認</button></form>
   </section>
   <section id="source-review" class="panel section" hidden>
     <div class="panel-heading"><h2>保存する内容</h2></div><p id="source-review-message" role="status"></p>
+    <div id="source-review-match"></div>
     <div class="table-scroll"><table><thead><tr><th>項目</th><th>変更前</th><th>変更後</th></tr></thead><tbody id="source-diff"></tbody></table></div>
-    <p class="form-hint">保存先はこのツールの作品情報です。書庫・Komgaへの反映は今後追加します。</p>
+    <p class="form-hint">保存先はこのツールの作品情報です。Komgaへの反映はCLIで別途確認して実行します。</p>
     <button class="button primary" id="source-save" type="button" disabled>対応付けと選んだ情報を保存</button>
   </section>
 </div>

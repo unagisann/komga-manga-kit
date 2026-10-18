@@ -13,6 +13,7 @@ from manga_kit import create_app
 from manga_kit.config import Settings
 from manga_kit.features import Feature, built_in_features
 from manga_kit.komga import KomgaClient, KomgaError
+from manga_kit.models import Book, ScanResult, Series
 from manga_kit.sample import create_sample_library
 
 
@@ -31,13 +32,50 @@ class ApplicationTests(unittest.TestCase):
 
     def test_pages_and_static_assets_render_without_external_calls(self):
         with patch('requests.Session.get', side_effect=AssertionError('Unexpected network request')):
-            for path in ['/', '/library', '/organize', '/metadata', '/settings', '/roadmap',
-                         '/static/app.css', '/static/tokens.css', '/static/app.js', '/static/theme.js', '/static/mark.svg']:
+            for path in ['/', '/api/portal/library', '/library', '/organize', '/metadata', '/settings', '/roadmap',
+                         '/static/app.css', '/static/tokens.css', '/static/app.js', '/static/portal.js', '/static/theme.js', '/static/mark.svg']:
                 with self.subTest(path=path):
                     response = self.client.get(path)
                     self.assertEqual(response.status_code, 200)
                     response.close()
         self.assertEqual(self.client.get('/healthz').json['status'], 'ok')
+
+    def test_portal_is_a_reading_home_and_does_not_start_normalization_or_scan_on_open(self):
+        with (patch.object(self.app.extensions['library'], 'scan', side_effect=AssertionError('Blocking scan')),
+              patch.object(self.app.extensions['normalization'], 'submit_check', side_effect=AssertionError('Unrequested normalization')),
+              patch('requests.Session.request', side_effect=AssertionError('Unexpected network'))):
+            response = self.client.get('/')
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn('<h1>今日は、<br>何を読む？</h1>', html)
+        self.assertIn('href="/normalize"', html)
+        self.assertNotIn('id="normalization-check"', html)
+        self.assertEqual(self.app.extensions['state'].jobs(), [])
+
+    def test_portal_summarizes_all_series_but_bounds_and_escapes_cards_without_private_paths(self):
+        series = [Series(f'private/folder{i}', f'作品{i}', status='completed' if i % 2 else 'ongoing',
+                         books=[Book(f'private/folder{i}/book.cbz', '1')]) for i in range(30)]
+        series[0].title = '<img src=x onerror="window.injection=1">'
+        with (patch.object(self.app.extensions['library'], 'scan', return_value=ScanResult(series)),
+              patch('requests.Session.request', side_effect=AssertionError('Unexpected network'))):
+            response = self.client.get('/api/portal/library')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, 'text/html')
+        html = response.get_data(as_text=True)
+        completed = html.split('id="portal-completed-rail"', 1)[1].split('</section>', 1)[0]
+        self.assertEqual(completed.count('class="rail-card"'), 12)
+        self.assertIn('<span class="num">15</span><span class="lbl">完結済み', html)
+        self.assertIn('<template data-slot="portal-stats">', html)
+        self.assertNotIn('private/folder', html)
+        self.assertNotIn('<img src=x', html)
+        self.assertIn('&lt;img src=x', html)
+        self.assertIn('/library?status=completed', html)
+        self.assertEqual(self.app.extensions['state'].jobs(), [])
+        with patch.object(self.app.extensions['library'], 'scan', return_value=ScanResult(series)):
+            reroll = self.client.get('/api/portal/library?section=completed').get_data(as_text=True)
+        self.assertEqual(reroll.count('class="rail-card"'), 12)
+        self.assertNotIn('data-slot', reroll)
+        self.assertNotIn('<img src=x', reroll)
 
     def test_library_filters_by_kana_status_and_title(self):
         response = self.client.get('/library?q=ｶﾓﾒ&status=completed&row=か')
@@ -67,6 +105,7 @@ class ApplicationTests(unittest.TestCase):
             self.assertTrue(response.json['api_key_configured'])
             self.assertNotIn('a-secret-that-must-not-appear', response.get_data(as_text=True))
             self.assertNotIn('a-secret-that-must-not-appear', self.client.get('/settings').get_data(as_text=True))
+            self.assertNotIn('a-secret-that-must-not-appear', self.client.get('/').get_data(as_text=True))
 
     def test_unconfigured_connection_is_an_honest_error(self):
         response = self.client.post('/api/komga/test', json={})

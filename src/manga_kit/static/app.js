@@ -28,9 +28,9 @@
     return result;
   };
   const jobStates = { queued: '待機中', running: '処理中', succeeded: '完了', failed: '失敗', interrupted: '中断' };
-  const jobKinds = { scan: '蔵書スキャン', preview: '整理プレビュー', organize: '整理の実行', restore: '整理の復元', conversion: 'CBZ生成', conversion_restore: 'CBZ生成の取り消し' };
+  const jobKinds = { normalization_check: '追加・変更分の確認', normalize: 'ノーマライズ', normalization_execute: 'ノーマライズの実行', normalization_restore: 'ノーマライズの復元', enrichment: '自動補完の候補取得', scan: '蔵書スキャン', preview: '整理プレビュー', organize: '整理の実行', restore: '整理の復元', conversion: 'CBZ生成', conversion_restore: 'CBZ生成の取り消し', komga_metadata: 'Komga作品情報の反映', komga_metadata_restore: 'Komga作品情報の復元', komga_authors: 'Komga著者情報の反映', komga_authors_restore: 'Komga著者情報の復元' };
   const statusLabels = { ongoing: '連載中', completed: '完結', unknown: '未分類' };
-  const waitJob = async (job, update) => {
+  const waitJob = async (job, update, { result = true } = {}) => {
     while (['queued', 'running'].includes(job.status)) {
       update?.(job);
       await new Promise((resolve) => setTimeout(resolve, 700));
@@ -38,10 +38,20 @@
     }
     update?.(job);
     if (job.status !== 'succeeded') throw new Error(job.error || '処理を完了できませんでした。');
-    return get(`/api/jobs/${encodeURIComponent(job.id)}/result?limit=200`);
+    return result ? get(`/api/jobs/${encodeURIComponent(job.id)}/result?limit=200`) : job;
   };
   document.querySelectorAll('.local-time').forEach((element) => {
     element.textContent = new Date(element.dateTime).toLocaleString('ja-JP');
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== '/' || event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
+    const target = event.target;
+    if (target instanceof HTMLElement && (target.closest('input, textarea, select') || target.isContentEditable)) return;
+    const search = $('#header-search');
+    if (!search?.getClientRects().length) return;
+    event.preventDefault();
+    search.focus();
   });
 
   $('#theme-toggle')?.addEventListener('click', () => {
@@ -54,8 +64,13 @@
   $('#refresh-library')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
-    try { await waitJob(await post('/api/jobs', { kind: 'scan' })); location.reload(); }
-    catch (error) { announce(error.message); button.disabled = false; }
+    try {
+      button.textContent = '読み取り開始…';
+      await waitJob(await post('/api/jobs', { kind: 'scan' }), (job) => {
+        button.textContent = `読み取り中 ${job.current}冊`;
+      });
+      location.reload();
+    } catch (error) { announce(error.message); button.textContent = '読み直す'; button.disabled = false; }
   });
 
   $('#test-komga')?.addEventListener('click', async (event) => {
@@ -79,45 +94,45 @@
     const pattern = patterns[event.target.value];
     if (!pattern) return;
     ['ongoing', 'completed', 'unknown'].forEach((key) => { form.elements.namedItem(key).value = pattern; });
-    announce('プリセットを選びました。「プレビューを更新」で配置を確認できます。');
+    form.dispatchEvent(new Event('input'));
+    announce('プリセットを選びました。「配置を確認」で結果を更新できます。');
   });
 
+  $('#layout-form')?.addEventListener('input', () => {
+    if ($('#plan-list')) $('#plan-stale').hidden = false;
+  });
+  $('#layout-form')?.addEventListener('invalid', () => {
+    $('#layout-fields details').open = true;
+  }, true);
   $('#layout-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget, button = form.querySelector('button[type=submit]');
-    const errorBox = $('#plan-error');
-    button.disabled = true;
+    const errorBox = $('#plan-error'), fields = $('#layout-fields');
+    const layout = Object.fromEntries(new FormData(form));
+    button.disabled = true; fields.disabled = true;
     errorBox.hidden = true;
     try {
-      const result = await waitJob(await post('/api/jobs', { kind: 'preview', layout: Object.fromEntries(new FormData(form)) }), (job) => {
+      const submitted = await post('/api/jobs', { kind: 'preview', layout });
+      const job = await waitJob(submitted, (current) => {
         const status = $('#plan-job-status');
-        if (status) status.textContent = `${jobStates[job.status]} · ${job.current}冊を確認 · 処理履歴に保存します`;
-      });
-      const counts = $('#plan-counts');
-      counts.replaceChildren();
-      [['ready', '変更予定'], ['unchanged', '変更なし'], ['blocked', '要確認']].forEach(([key, label]) => {
-        const element = node('span'); element.append(node('strong', '', String(result.counts[key])), ` ${label}`); counts.append(element);
-      });
-      const list = $('#plan-list'); list.replaceChildren();
-      result.items.slice(0, 200).forEach((item) => {
-        const article = node('article', `plan-item ${item.state}`), heading = node('div', 'plan-item-heading');
-        heading.append(node('strong', '', item.title), node('span', 'chip', { ready: '変更予定', unchanged: '変更なし', blocked: '要確認' }[item.state]));
-        article.append(heading, node('code', 'source-path', item.source), node('span', 'path-arrow', '↓'), node('code', 'target-path', item.target || '巻数の確認が必要です'));
-        item.issues.forEach((issue) => article.append(node('p', 'warning-text', issue)));
-        list.append(article);
-      });
-      if (!result.items.length) list.append(node('div', 'empty-state', '整理対象の蔵書がありません。'));
-      if (result.total_items > 200) list.append(node('p', 'form-hint', '先頭200件を表示しています。全件はCLIの job で確認できます。'));
-      if (result.truncated) { errorBox.textContent = 'ファイル上限に達しているため、一部の蔵書のプレビューです。'; errorBox.hidden = false; }
-      announce('プレビューを更新しました。');
-    } catch (error) { errorBox.textContent = error.message; errorBox.hidden = false; }
-    finally { button.disabled = false; }
+        const text = current.status === 'queued' ? '順番を待っています…' : current.total !== null ? '全冊の配置を確認しています…' : `蔵書を確認中 · ${current.current}冊`;
+        const link = node('a', '', '処理履歴を見る'); link.href = `/jobs/${encodeURIComponent(current.id)}`;
+        status.replaceChildren(document.createTextNode(`${text} · `), link);
+        button.textContent = '確認中…';
+      }, { result: false });
+      location.assign(`/organize?preview=${encodeURIComponent(job.id)}`);
+    } catch (error) {
+      errorBox.textContent = error.message; errorBox.hidden = false;
+      $('#plan-job-status').textContent = '配置を確認できませんでした。前回の結果を表示しています。処理履歴も確認できます。';
+      button.disabled = false; fields.disabled = false; button.textContent = '配置を確認';
+    }
   });
 
   const editor = $('#metadata-form');
   if (editor) {
     const save = $('#metadata-save'), errorBox = $('#metadata-error');
-    const labels = { title: '作品名', author: '著者', reading: '読み', status: '状態', summary: 'あらすじ', publisher: '出版社' };
+    const labels = { title: '作品名', author: '著者', reading: '読み', status: '状態', summary: 'あらすじ', publisher: '出版社', genres: 'ジャンル', tags: 'タグ' };
+    const display = (value) => Array.isArray(value) ? value.join(' / ') || '未設定' : value || '未設定';
     let pending = null, generation = 0;
     const resetDisabled = $('#metadata-reset').disabled;
     const review = async (body) => {
@@ -132,7 +147,7 @@
           const row = node('tr');
           const before = change.field === 'status' ? statusLabels[change.before] : change.before;
           const after = change.field === 'status' ? statusLabels[change.after] : change.after;
-          row.append(node('td', '', labels[change.field] || change.field), node('td', 'metadata-value', before || '未設定'), node('td', 'metadata-value', after || '未設定'));
+          row.append(node('td', '', labels[change.field] || change.field), node('td', 'metadata-value', display(before)), node('td', 'metadata-value', display(after)));
           rows.append(row);
         });
         $('#metadata-message').textContent = `${result.changes.length}項目の変更 · 五十音分類: ${result.before_row}行 → ${result.after_row}行${result.reset ? ' · 保存した編集を解除します' : ''}`;
@@ -142,7 +157,9 @@
       finally { editor.querySelectorAll('button').forEach((button) => { button.disabled = false; }); $('#metadata-reset').disabled = resetDisabled; }
     };
     editor.addEventListener('submit', (event) => {
-      event.preventDefault(); review({ fields: Object.fromEntries(new FormData(editor)) });
+      event.preventDefault(); const fields = Object.fromEntries(new FormData(editor));
+      ['genres', 'tags'].forEach((key) => { fields[key] = fields[key].split('\n').map((item) => item.trim()).filter(Boolean); });
+      review({ fields });
     });
     editor.addEventListener('input', () => {
       generation += 1; pending = null; save.disabled = true; $('#metadata-message').textContent = '編集内容が変わりました。変更内容を再確認してください。';
@@ -173,8 +190,8 @@
         const historyRows = $('#history-table'); historyRows.replaceChildren();
         history.events.forEach((event) => {
           const row = node('tr');
-          const labels = { metadata_edit: '作品情報の編集', job_created: '処理の受付', job_finished: '処理の終了', metadata_relocated: '編集情報の引き継ぎ' };
-          const detail = event.kind === 'metadata_edit' ? `${event.detail.source_action === 'linked' ? '書誌情報を対応付け · ' : event.detail.source_action === 'unlinked' ? '対応付けを解除 · ' : ''}${event.detail.changes.length}項目${event.detail.reset ? 'を元に戻しました' : 'を変更しました'}` : event.kind === 'metadata_relocated' ? (event.detail.restore ? '編集情報を元の作品へ戻しました' : '編集情報を整理先へ引き継ぎました') : event.kind === 'job_created' ? jobKinds[event.detail.kind] : jobStates[event.detail.status];
+          const labels = { metadata_enrichment: '不足情報の一括補完', metadata_edit: '作品情報の編集', job_created: '処理の受付', job_finished: '処理の終了', metadata_relocated: '編集情報の引き継ぎ' };
+          const detail = event.kind === 'metadata_enrichment' ? `${event.detail.series}作品の不足情報を補完しました` : event.kind === 'metadata_edit' ? `${event.detail.source_action === 'linked' ? '書誌情報を対応付け · ' : event.detail.source_action === 'unlinked' ? '対応付けを解除 · ' : ''}${event.detail.changes.length}項目${event.detail.reset ? 'を元に戻しました' : 'を変更しました'}` : event.kind === 'metadata_relocated' ? (event.detail.restore ? '編集情報を元の作品へ戻しました' : '編集情報を整理先へ引き継ぎました') : event.kind === 'job_created' ? jobKinds[event.detail.kind] : jobStates[event.detail.status];
           row.append(node('td', '', labels[event.kind] || event.kind), node('td', '', detail), node('td', '', new Date(event.created).toLocaleString('ja-JP')));
           historyRows.append(row);
         });
@@ -196,7 +213,7 @@
       try {
         const job = await get(`/api/jobs/${encodeURIComponent(detail.dataset.jobId)}`);
         if (!['queued', 'running'].includes(job.status)) location.reload();
-        else { $('#job-status').textContent = `${jobStates[job.status]} · ${job.current}冊を確認`; setTimeout(poll, 1500); }
+        else { $('#job-status').textContent = `${jobStates[job.status]} · ${job.current}${detail.dataset.jobKind === 'enrichment' ? '作品' : '冊'}を確認`; setTimeout(poll, 1500); }
       } catch (error) { $('#job-status').textContent = error.message; }
     }; poll();
   }

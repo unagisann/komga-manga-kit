@@ -1,19 +1,38 @@
-{% extends 'base.html' %}
-{% import 'components.html' as ui %}
+{% extends 'base.html' %}{% import 'components.html' as ui %}
+{% block title %}ポータル{% endblock %}
+{% block scripts %}<script src="{{ asset_url('portal.js') }}" defer></script>{% endblock %}
 {% block content %}
-<section class="hero">
-  <div><p class="eyebrow">YOUR LIBRARY, YOUR WAY</p><h1>蔵書を整えて、<br>読む時間をつくる。</h1><p class="hero-copy">作品名も、巻数も、本棚の並びも。<br>日本語の漫画に合った整理を、いつものライブラリに。</p><div class="hero-actions"><a class="button primary" href="/library">{{ ui.icon('book', 18) }}蔵書をひらく</a><a class="button" href="/organize">整理をプレビュー {{ ui.icon('arrow', 17) }}</a></div></div>
-  <div class="hero-library" aria-label="サンプル蔵書のイメージ"><div class="shelf-label"><span>ON YOUR SHELF</span>{{ ui.icon('book', 16) }}</div><div class="hero-books">{% for series in entries[:3] %}{{ ui.cover(series, loop.index0) }}{% endfor %}</div><div class="shelf-caption"><span class="status-dot"></span>{{ 'サンプルライブラリ' if settings.demo else 'ローカルライブラリ' }}<span>{{ stats.series }} 作品</span></div></div>
+{#- 集計・ピック・棚は /api/portal/library が返す。ヒーロー内の枠は portal.js が差し替える。 -#}
+<section class="pv-hero">
+  <div>
+    <p class="eyebrow" id="portal-eyebrow">ライブラリ</p>
+    <h1>今日は、<br>何を読む？</h1>
+    <p class="pv-copy">今期アニメの原作、たまった新刊、完結済みの一気読み候補。ライブラリのいまをひとまとめに。</p>
+    <div class="pv-stats" id="portal-stats">
+      {% for label in ['完結済み', '新刊待ち', '今期の原作'] %}{% if not loop.first %}<span class="sep" aria-hidden="true"></span>{% endif %}<div><span class="num">—</span><span class="lbl">{{ label }}</span></div>{% endfor %}
+    </div>
+  </div>
+  <div id="portal-feature"></div>
 </section>
-{{ ui.scan_notice(scan) }}
-<section class="stats-grid" aria-label="蔵書の集計">
-  {% for value, label, icon in [(stats.series, '蔵書の作品数', 'book'), (stats.books, '取り込んだ巻数', 'folder'), (stats.completed, '完結した作品', 'check'), (stats.needs_metadata, 'メタデータの確認待ち', 'tag')] %}<div class="stat"><span class="stat-icon">{{ ui.icon(icon) }}</span><span class="stat-number">{{ value }}<small>{{ '冊' if loop.index == 2 else '作品' }}</small></span><span class="stat-label">{{ label }}</span></div>{% endfor %}
-</section>
-<section class="quick-grid" aria-label="主な機能">
-  <a href="/organize"><span class="quick-icon">{{ ui.icon('folder', 23) }}</span><strong>蔵書を整える</strong><span>フォルダと巻名を、自分のルールに。</span>{{ ui.icon('arrow', 17) }}</a>
-  <a href="/metadata"><span class="quick-icon">{{ ui.icon('tag', 23) }}</span><strong>作品情報を確認</strong><span>著者・読み・あらすじをひとまとめに。</span>{{ ui.icon('arrow', 17) }}</a>
-  <a href="/settings"><span class="quick-icon">{{ ui.icon('plug', 23) }}</span><strong>Komgaとつなぐ</strong><span>いつもの漫画サーバーへの接続を設定。</span>{{ ui.icon('arrow', 17) }}</a>
-</section>
-<section class="section"><div class="section-heading"><div><p class="eyebrow">LIBRARY</p><h2>本棚をひとめぐり</h2></div><a class="text-link" href="/library">すべての蔵書 {{ ui.icon('arrow', 17) }}</a></div><div class="book-grid preview-grid">{% for series in entries %}<a class="book-card" href="{{ url_for('library.index', q=series.title) }}">{{ ui.cover(series, loop.index0) }}<div class="book-info"><span class="chip {{ series.status }}">{{ status_labels[series.status] }}</span><h3>{{ series.title }}</h3><p>{{ series.author or '著者未設定' }}<span>· {{ series.books|length }}冊</span></p></div></a>{% else %}<div class="empty-state">蔵書がまだありません。設定からライブラリの保存先を指定してください。</div>{% endfor %}</div></section>
-<section class="next-panel"><div>{{ ui.icon('route', 25) }}<div><h2>まずは整理から。少しずつ、漫画ポータルへ。</h2><p>新刊チェック、日本語メタデータ補完、発見ページ。使える機能を一つずつ増やしていきます。</p></div></div><a class="button" href="/roadmap">ロードマップ {{ ui.icon('arrow', 17) }}</a></section>
+
+{% set komga = settings.tools.public_komga_url or settings.komga_url %}
+<nav class="pv-quick" aria-label="主な機能">
+  {% if komga %}<a href="{{ komga }}">{{ ui.icon('book', 18) }}<span class="t">Komgaで読む</span><span class="d">ライブラリ本体をブラウザで開く</span></a>
+  {% else %}<a href="{{ url_for('maintenance.settings') }}">{{ ui.icon('plug', 18) }}<span class="t">Komgaとつなぐ</span><span class="d">接続先を設定すると、ここからライブラリ本体を開ける</span></a>{% endif %}
+  {% for endpoint, icon, title, description in [
+    ('library.index', 'search', '蔵書を探す', '読者層・出版社・年代・評価で絞り込み'),
+    ('tools.discovery', 'compass', '発見', '紹介記事・楽天Kobo売上・マンバ通信・コミックナタリー'),
+    ('tools.new_volumes', 'square-plus', '新刊チェック', '所持シリーズの新刊・予約状況（楽天Books＋Kobo）'),
+    ('tools.anime', 'tv', '今期のアニメ', '放送中アニメの原作を所持判定。持っている作品はすぐ読める'),
+    ('tools.rankings', 'chart', '次にくるマンガ大賞', '歴代ランキング（2015〜）を所持状況つきで'),
+    ('normalize.index', 'refresh', '追加した漫画を整理', 'CBZ化・ページ順・名前と配置をまとめて整える'),
+    ('management.index', 'sliders', '管理', '補完・表紙修正・完結移動・処理履歴・設定')] %}
+  <a href="{{ url_for(endpoint) }}">{{ ui.icon(icon, 18) }}<span class="t">{{ title }}</span><span class="d">{{ description }}</span></a>
+  {% endfor %}
+</nav>
+
+<div id="portal-library" data-url="{{ url_for('api.portal_library') }}" aria-busy="true">
+  <p class="pv-empty" role="status">蔵書を読み込んでいます…</p>
+</div>
+<noscript><p class="notice">蔵書の集計を表示するにはJavaScriptを有効にしてください。<a href="{{ url_for('library.index') }}">蔵書一覧をひらく</a>からも作品を探せます。</p></noscript>
 {% endblock %}

@@ -4,11 +4,12 @@ app:
   demo: true
 library:
   root: ./var/sample-library
-  max_files: 20000
+  max_files: 50000 # Scans warn at 90% and stop at this many archives.
 data:
   root: ./var/state
 execution:
-  enabled: false # CLI execution only; keep disabled for normal preview use.
+  enabled: false # Enable confirmed file/Komga operations; defaults to preview only.
+  web_enabled: false # Opt in to reviewed normalization from a local/authenticated web session.
 layout:
   status_folders:
     ongoing: 連載中
@@ -31,3 +32,22 @@ rakuten:
   access_key_env: RAKUTEN_ACCESS_KEY
   origin: "" # Optional registered website origin, e.g. https://manga.example.com
   timeout_seconds: 10
+anilist:
+  enabled: false # Explicit title searches for tags/genres; no API key required.
+  timeout_seconds: 10
+tools:
+  kobo_enabled: false
+  anime_enabled: false
+  discovery_enabled: false
+  rankings_enabled: false
+  mangaupdates_enabled: false
+  ai_enabled: false
+  notify_enabled: false
+  ai_provider: chat # chat (Chat Completions compatible) or gemini
+  ai_url: ""
+  ai_model: ""
+  ai_key_env: MANGA_KIT_AI_KEY
+  notify_url_env: MANGA_KIT_NOTIFY_URL
+  public_komga_url: ""
+  credentials_file: "" # Optional absolute path in a separate private config directory.
+  reading_accounts: [] # [{name: Reader, api_key_env: KOMGA_READER_KEY}]

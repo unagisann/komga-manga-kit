@@ -1,9 +1,17 @@
 {% extends 'base.html' %}{% import 'components.html' as ui %}
 {% block title %}{{ series.title }}の情報{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">METADATA</p><h1>{{ series.title }}</h1><p>読みと作品情報を確認し、本棚の表示と整理プレビューに反映します。</p></div><a class="button" href="{{ url_for('metadata.index') }}">作品一覧へ</a></div>
-<div class="notice">保存した情報は再起動後も使えます。書庫・series.json・Komgaへの反映は今後追加します。</div>
-<section class="panel section"><div class="panel-heading"><h2>外部の作品情報</h2><a class="button" href="{{ url_for('metadata.metadata_sources', series_id=series.id) }}">候補を探す・対応付けを確認</a></div>{% if provenance %}<p>{{ '楽天Books' if provenance.provider == 'rakuten_books' else '架空の書誌データ' }} · {{ provenance.item_id }}{% if provenance.url %} · <a href="{{ provenance.url }}" target="_blank" rel="noopener noreferrer">情報源を見る</a>{% endif %}</p><p class="muted">採用した項目: {% for key in provenance.applied_fields %}{{ metadata_labels.get(key, key) }}{{ ' / ' if not loop.last else '' }}{% else %}対応付けのみ{% endfor %}{% if provenance.adjusted_fields %}（候補から調整: {% for key in provenance.adjusted_fields %}{{ metadata_labels.get(key, key) }}{{ '・' if not loop.last else '' }}{% endfor %}）{% endif %} · 取得 <time class="local-time" datetime="{{ provenance.retrieved_at }}">{{ provenance.retrieved_at }}</time></p>{% else %}<p class="muted">作品名・著者・ISBNで代表巻の書誌情報を探し、読みや出版社を項目ごとに確認して補えます。</p>{% endif %}</section>
+<div class="page-heading"><div><p class="eyebrow">MANUAL CORRECTION</p><h1>{{ series.title }}の情報を修正</h1><p>自動補完で取得できなかった項目や、誤っている情報を修正します。</p></div><a class="button" href="{{ url_for('management.metadata') }}">手動修正の一覧へ</a></div>
+<div class="notice">保存した情報は再起動後も使えます。この画面の保存は本棚の作品情報に反映します。Komgaへの反映はCLIで項目と差分を確認して実行できます。</div>
+<section class="panel section">
+  <div class="panel-heading"><h2>外部の作品情報</h2><a class="button" href="{{ url_for('metadata.metadata_sources', series_id=series.id) }}">候補を探す・対応付けを確認</a></div>
+  <p class="muted">楽天Booksで書誌情報、AniListでタグ・ジャンルを補えます。</p>
+  {% for source_key, link in provenances.items() %}
+  <p>{{ provider_labels.get(link.provider, link.provider) }} · {{ link.item_id }}{% if link.url %} · <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer">情報源を見る</a>{% endif %}{% if source_key != 'komga' %} · <a href="{{ url_for('metadata.metadata_sources', series_id=series.id, provider=source_key) }}">対応付けを確認</a>{% endif %}</p>
+  <p class="muted">採用した項目: {% for key in link.applied_fields %}{{ metadata_labels.get(key, key) }}{{ ' / ' if not loop.last else '' }}{% else %}対応付けのみ{% endfor %}{% if link.adjusted_fields %}（候補から調整: {% for key in link.adjusted_fields %}{{ metadata_labels.get(key, key) }}{{ '・' if not loop.last else '' }}{% endfor %}）{% endif %} · 取得 <time class="local-time" datetime="{{ link.retrieved_at }}">{{ link.retrieved_at }}</time></p>
+  {{ ui.source_identity(link) }}
+  {% endfor %}
+</section>
 <div class="editor-grid">
   <section class="panel rule-panel"><div class="panel-heading"><h2>作品情報を編集</h2><span class="chip">{{ series.kana_row }}行</span></div>
     <form id="metadata-form" data-series-id="{{ series.id }}">
@@ -11,9 +19,10 @@
       <label>{{ label }}<input name="{{ key }}" value="{{ series[key] }}" maxlength="300" {% if key == 'title' %}required{% endif %}></label>{% endfor %}
       <label>状態<select name="status">{% for key, label in status_labels.items() %}<option value="{{ key }}" {% if key == series.status %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
       <label>あらすじ<textarea name="summary" rows="6" maxlength="8000">{{ series.summary }}</textarea></label>
+      {% for key, label in [('genres', 'ジャンル'), ('tags', 'タグ')] %}<label>{{ label }}（1行に1項目）<textarea name="{{ key }}" rows="3" maxlength="10100">{{ series[key]|join('\n') }}</textarea></label>{% endfor %}
       <p class="form-hint">半角・全角カナは保存時にひらがなへ揃えます。読みは五十音分類と整理先に使います。</p>
       <button class="button primary" type="submit">変更内容を確認</button>
-      <button class="button" type="button" id="metadata-reset" {% if not overrides and not provenance %}disabled{% endif %}>読み取った情報に戻す</button>
+      <button class="button" type="button" id="metadata-reset" {% if not overrides and not provenances %}disabled{% endif %}>読み取った情報に戻す</button>
     </form>
   </section>
   <section class="panel"><div class="panel-heading"><h2>変更内容</h2></div>
@@ -21,7 +30,7 @@
     <div id="metadata-error" class="notice warning" role="alert" hidden></div>
     <div class="table-scroll"><table><thead><tr><th>項目</th><th>変更前</th><th>変更後</th></tr></thead><tbody id="metadata-diff"></tbody></table></div>
     <button class="button primary section" type="button" id="metadata-save" disabled>この内容で保存</button>
-    <details class="section"><summary>書庫から読み取った情報</summary><dl class="settings-list original-metadata">{% for key, label in [('title', '作品名'), ('author', '著者'), ('reading', '読み'), ('status', '状態'), ('publisher', '出版社'), ('summary', 'あらすじ')] %}<dt>{{ label }}</dt><dd>{{ status_labels.get(original[key], original[key]) if key == 'status' else original[key] or '未設定' }}</dd>{% endfor %}</dl></details>
+    <details class="section"><summary>書庫から読み取った情報</summary><dl class="settings-list original-metadata">{% for key, label in metadata_labels.items() %}<dt>{{ label }}</dt><dd>{% if key == 'status' %}{{ status_labels.get(original[key], original[key]) }}{% elif key in ['genres', 'tags'] %}{{ original[key]|join(' / ') or '未設定' }}{% else %}{{ original[key] or '未設定' }}{% endif %}</dd>{% endfor %}</dl></details>
   </section>
 </div>
 {% endblock %}

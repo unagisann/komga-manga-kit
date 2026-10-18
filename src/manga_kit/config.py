@@ -107,11 +107,82 @@ class RakutenSettings:
 
 
 @dataclass(frozen=True)
+class AniListSettings:
+    enabled: bool = False
+    timeout_seconds: int = 10
+
+    def validate(self):
+        if type(self.enabled) is not bool:
+            raise ConfigError("anilist.enabled は true / false で指定してください。")
+        if type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 30:
+            raise ConfigError("AniListのタイムアウトは1〜30秒で指定してください。")
+        return self
+
+
+@dataclass(frozen=True)
+class ToolsSettings:
+    kobo_enabled: bool = False
+    anime_enabled: bool = False
+    discovery_enabled: bool = False
+    rankings_enabled: bool = False
+    mangaupdates_enabled: bool = False
+    ai_enabled: bool = False
+    notify_enabled: bool = False
+    ai_provider: str = "chat"
+    ai_url: str = ""
+    ai_model: str = ""
+    ai_key_env: str = "MANGA_KIT_AI_KEY"
+    notify_url_env: str = "MANGA_KIT_NOTIFY_URL"
+    public_komga_url: str = ""
+    credentials_file: str = ""
+    reading_accounts: tuple = ()
+
+    def validate(self):
+        for name in self.__dataclass_fields__:
+            value = getattr(self, name)
+            if name.endswith("_enabled") and type(value) is not bool:
+                raise ConfigError(f"tools.{name} は true / false で指定してください。")
+        for name in (self.ai_key_env, self.notify_url_env):
+            if not isinstance(name, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]*", name):
+                raise ConfigError("認証情報は環境変数名で指定してください。")
+        if not isinstance(self.ai_provider, str) or self.ai_provider not in {"chat", "gemini"}:
+            raise ConfigError("AIの方式は chat / gemini で指定してください。")
+        for name in ("ai_url", "public_komga_url"):
+            value = getattr(self, name)
+            if not isinstance(value, str):
+                raise ConfigError("接続先URLは文字列で指定してください。")
+            try:
+                parsed = urlsplit(value)
+                parsed.port
+            except ValueError:
+                raise ConfigError("接続先URLの形式を確認してください。") from None
+            if value and (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                          or parsed.username or parsed.password or parsed.query or parsed.fragment or any(ord(c) < 33 for c in value)):
+                raise ConfigError("接続先は認証情報を含まないHTTP(S) URLで指定してください。")
+        if not isinstance(self.ai_model, str) or len(self.ai_model) > 200 or any(ord(c) < 32 for c in self.ai_model):
+            raise ConfigError("AIモデル名は200文字以内で指定してください。")
+        if not isinstance(self.credentials_file, str) or len(self.credentials_file) > 4096:
+            raise ConfigError("認証情報の保存先を確認してください。")
+        if not isinstance(self.reading_accounts, (tuple, list)) or len(self.reading_accounts) > 100:
+            raise ConfigError("読書状況のアカウントは100件以内で指定してください。")
+        names = set()
+        for account in self.reading_accounts:
+            if (not isinstance(account, dict) or set(account) != {"name", "api_key_env"}
+                    or not isinstance(account["name"], str) or not 1 <= len(account["name"]) <= 80
+                    or any(ord(c) < 32 for c in account["name"])
+                    or account["name"] in names or not isinstance(account["api_key_env"], str)
+                    or not re.fullmatch(r"[A-Z][A-Z0-9_]*", account["api_key_env"])):
+                raise ConfigError("アカウントには重複しない名前とAPIキーの環境変数名を指定してください。")
+            names.add(account["name"])
+        return self
+
+
+@dataclass(frozen=True)
 class Settings:
     name: str = "Komga Manga Kit"
     demo: bool = True
     library_root: Path = field(default_factory=lambda: Path.cwd() / "var" / "sample-library")
-    max_files: int = 20000
+    max_files: int = 50000
     layout: Layout = field(default_factory=Layout)
     komga_url: str = ""
     api_key_env: str = "KOMGA_API_KEY"
@@ -120,10 +191,24 @@ class Settings:
     path_mappings: tuple[PathMapping, ...] = ()
     execution_enabled: bool = False
     rakuten: RakutenSettings = field(default_factory=RakutenSettings)
+    anilist: AniListSettings = field(default_factory=AniListSettings)
+    web_execution_enabled: bool = False
+    tools: ToolsSettings = field(default_factory=ToolsSettings)
 
     def validate_storage(self):
         self.rakuten.validate()
+        self.anilist.validate()
+        self.tools.validate()
+        if type(self.web_execution_enabled) is not bool:
+            raise ConfigError("execution.web_enabled は true / false で指定してください。")
+        if self.web_execution_enabled and not self.execution_enabled:
+            raise ConfigError("Webのノーマライズには execution.enabled: true も設定してください。")
         library, data = self.library_root.resolve(), self.data_root.resolve()
+        if self.tools.credentials_file:
+            credentials = Path(self.tools.credentials_file).expanduser()
+            if (not credentials.is_absolute() or credentials.resolve().is_relative_to(library)
+                    or credentials.resolve().is_relative_to(data)):
+                raise ConfigError("認証情報の保存先は漫画ライブラリ・実行データと分けた絶対パスで指定してください。")
         if library.is_relative_to(data) or data.is_relative_to(library):
             raise ConfigError("実行データと漫画ライブラリは別の保存先にしてください。")
         for mapping in self.path_mappings:
@@ -146,16 +231,17 @@ def load_settings(path: str | Path | None = None) -> Settings:
             raw = {} if loaded is None else loaded
         except (OSError, yaml.YAMLError) as exc:
             raise ConfigError("設定ファイルを読み込めません。") from exc
-    if not isinstance(raw, dict) or set(raw) - {"app", "library", "layout", "komga", "data", "execution", "rakuten"}:
-        raise ConfigError("設定は app / library / layout / komga / data / execution / rakuten のマッピングで指定してください。")
-    sections = {name: raw.get(name, {}) for name in ("app", "library", "layout", "komga", "data", "execution", "rakuten")}
+    if not isinstance(raw, dict) or set(raw) - {"app", "library", "layout", "komga", "data", "execution", "rakuten", "anilist", "tools"}:
+        raise ConfigError("設定は app / library / layout / komga / data / execution / rakuten / anilist / tools のマッピングで指定してください。")
+    sections = {name: raw.get(name, {}) for name in ("app", "library", "layout", "komga", "data", "execution", "rakuten", "anilist", "tools")}
     if any(not isinstance(value, dict) for value in sections.values()):
         raise ConfigError("設定の各セクションはマッピングで指定してください。")
     valid_keys = {"app": {"name", "demo"}, "library": {"root", "max_files"},
                   "layout": {"status_folders", "series", "book", "ongoing", "completed", "unknown"},
                   "komga": {"base_url", "api_key_env", "timeout_seconds", "path_mappings"},
-                  "data": {"root"}, "execution": {"enabled"},
-                  "rakuten": {"enabled", "application_id_env", "access_key_env", "origin", "timeout_seconds"}}
+                  "data": {"root"}, "execution": {"enabled", "web_enabled"},
+                  "rakuten": {"enabled", "application_id_env", "access_key_env", "origin", "timeout_seconds"},
+                  "anilist": {"enabled", "timeout_seconds"}, "tools": set(ToolsSettings.__dataclass_fields__)}
     for section, value in sections.items():
         if set(value) - valid_keys[section]:
             raise ConfigError(f"{section} に未知の設定項目があります。")
@@ -183,7 +269,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
             raise ConfigError("MANGA_KIT_DEMO は true / false で指定してください。")
         demo = value in {"true", "1"}
     name = app.get("name", "Komga Manga Kit")
-    limit, timeout = lib.get("max_files", 20000), komga.get("timeout_seconds", 10)
+    limit, timeout = lib.get("max_files", 50000), komga.get("timeout_seconds", 10)
     if not isinstance(demo, bool) or not isinstance(name, str) or not 1 <= len(name) <= 80:
         raise ConfigError("app.name / app.demo が不正です。")
     if type(limit) is not int or not 1 <= limit <= 100000 or type(timeout) is not int or not 1 <= timeout <= 60:
@@ -224,6 +310,14 @@ def load_settings(path: str | Path | None = None) -> Settings:
     enabled = sections["execution"].get("enabled", False)
     if type(enabled) is not bool:
         raise ConfigError("execution.enabled は true / false で指定してください。")
+    tools = dict(sections["tools"])
+    if tools.get("credentials_file"):
+        if not isinstance(tools["credentials_file"], str):
+            raise ConfigError("認証情報の保存先を文字列で指定してください。")
+        credentials = Path(tools["credentials_file"]).expanduser()
+        tools["credentials_file"] = str((credentials if credentials.is_absolute() else source.parent / credentials).absolute())
     return Settings(name, demo, root.resolve(), limit, Layout(**layout).validate(), url.rstrip("/"), key_env,
                     timeout, data_root.resolve(), tuple(mappings), enabled,
-                    RakutenSettings(**sections["rakuten"]).validate()).validate_storage()
+                    RakutenSettings(**sections["rakuten"]).validate(),
+                    AniListSettings(**sections["anilist"]).validate(),
+                    sections["execution"].get("web_enabled", False), ToolsSettings(**tools).validate()).validate_storage()

@@ -1,0 +1,10 @@
+{% if plan.truncated %}<div class="notice warning" role="status">ファイル上限に達したため、一部の蔵書の結果です。</div>{% endif %}
+{% for warning in plan.warnings %}<div class="notice warning" role="status">{{ warning }}</div>{% endfor %}
+<nav class="plan-filters" aria-label="配置の状態で絞り込み">{% for filter in plan_filters %}<a class="plan-filter {{ 'active' if filter.state == selected_state else '' }}" href="{{ filter.url }}" {% if filter.state == selected_state %}aria-current="true"{% endif %}><span>{{ filter.label }}</span><strong>{{ filter.count }}</strong></a>{% endfor %}</nav>
+<form class="plan-search" method="get" action="{{ request.path }}" role="search" aria-label="配置を検索">
+  {% if preview_id %}<input type="hidden" name="preview" value="{{ preview_id }}">{% endif %}<input type="hidden" name="state" value="{{ selected_state }}">
+  <label class="visually-hidden" for="plan-query">作品名・ファイル名で検索</label><input id="plan-query" type="search" name="q" value="{{ query }}" placeholder="作品名・ファイル名で検索"><button class="button" type="submit">{{ ui.icon('search', 16) }}検索</button>
+</form>
+<p class="form-hint" id="plan-page-summary" role="status">{{ pagination.total }}件中 {{ pagination.start }}–{{ pagination.end }}件を表示 · 20件ずつ表示します。件数と衝突の判定は全冊が対象です。</p>
+<div class="plan-list" id="plan-list">{% for item in plan['items'] %}{{ ui.plan_item(item) }}{% else %}<div class="empty-state">{% if query %}条件に合う配置はありません。{% elif selected_state == 'blocked' %}要確認の配置はありません。{% elif selected_state == 'ready' %}変更予定の配置はありません。{% else %}該当する配置はありません。{% endif %}</div>{% endfor %}</div>
+{{ ui.pagination(pagination, '件') }}

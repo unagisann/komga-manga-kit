@@ -4,7 +4,7 @@ from pathlib import Path, PurePosixPath
 import shutil
 from uuid import uuid4
 
-from .archives import build_cbz, inspect_archive, name_key
+from .archives import PAGE_ORDERS, build_cbz, inspect_archive, name_key
 from .config import ConfigError
 from .filesystem import LibraryFilesystem, file_hash
 from .durability import durable_mkdir, sync_directory, sync_file
@@ -24,7 +24,9 @@ class ConversionService(OperationService):
             raise ConfigError("変換先のフォルダを作成してから指定してください。")
         return path
 
-    def prepare(self, selected, output):
+    def prepare(self, selected, output, *, page_order="natural-path"):
+        if page_order not in PAGE_ORDERS:
+            raise ConfigError("ページ順は自然順または辞書順を指定してください。")
         if not selected or len(selected) > self.settings.max_files:
             raise ConfigError("変換する書庫の相対パスを --book で指定してください。")
         root = self.output_path(output)
@@ -38,7 +40,7 @@ class ConversionService(OperationService):
                     raise ConfigError("複数の書庫が同じCBZ名になります。別の計画で変換してください。")
                 targets.add(key)
                 destination.ensure_absent(target)
-                archive = inspect_archive(fs, relative)
+                archive = inspect_archive(fs, relative, page_order=page_order)
                 fs.verify(relative, snapshot)
                 entries.append({"source": relative, "target": target, "snapshot": snapshot, "archive": archive})
             if any(name_key(str(parent)) in targets for entry in entries for parent in PurePosixPath(entry["target"]).parents

@@ -1,12 +1,23 @@
 """Komga requests with private credentials and sanitized upstream errors."""
 import os
 import requests
+from .credentials import secret
 
 from .config import Settings
+
+# Writes depend on Komga's hash-based restore and metadata semantics. Add a
+# version only after the isolated real-server integration suite passes on it.
+WRITE_VERSIONS = ("1.29.0", "1.29.1")
+WRITE_VERSIONS_LABEL = " / ".join(WRITE_VERSIONS)
 
 
 class KomgaError(RuntimeError):
     pass
+
+
+def write_version_supported(info) -> bool:
+    build = info.get("build") if isinstance(info, dict) else None
+    return isinstance(build, dict) and build.get("version") in WRITE_VERSIONS
 
 
 class KomgaClient:
@@ -17,7 +28,7 @@ class KomgaClient:
     def get(self, endpoint: str, **params):
         if not self.settings.komga_url:
             raise KomgaError("Komgaの接続先が未設定です。config.yaml または KOMGA_URL を設定してください。")
-        key = os.getenv(self.settings.api_key_env, "")
+        key = secret(self.settings, self.settings.api_key_env)
         if not key:
             raise KomgaError("Komga APIキーが未設定です。設定した環境変数へ保存してください。")
         try:
@@ -43,6 +54,27 @@ class KomgaClient:
         return {"connected": True, "library_count": len(libraries),
                 "libraries": [{"id": lib.get("id"), "name": lib.get("name")} for lib in libraries]}
 
+    def image(self, identifier, page):
+        from urllib.parse import quote
+        if not self.settings.komga_url or not secret(self.settings, self.settings.api_key_env):
+            raise KomgaError("Komgaの接続先とAPIキーを設定してください。")
+        endpoint = "/api/v1/books/" + quote(identifier, safe="") + "/pages/" + str(page)
+        try:
+            with self.session.get(self.settings.komga_url + endpoint, params={"zero_based": "false"},
+                    headers={"X-API-Key": secret(self.settings, self.settings.api_key_env)},
+                    timeout=self.settings.timeout_seconds, stream=True, allow_redirects=False) as response:
+                mime = response.headers.get("Content-Type", "").split(";")[0]
+                if response.status_code != 200 or mime not in {"image/jpeg", "image/png", "image/gif", "image/webp", "image/avif", "image/bmp"}:
+                    raise KomgaError("Komgaのページ画像を確認できませんでした。画像形式と権限を確認してください。")
+                content = bytearray()
+                for block in response.iter_content(65536):
+                    content.extend(block)
+                    if len(content) > 25 * 1024 * 1024:
+                        raise KomgaError("ページ画像がプレビューの上限を超えています。")
+                return bytes(content), mime
+        except requests.RequestException:
+            raise KomgaError("Komgaのページ画像を取得できませんでした。") from None
+
     def series(self, page=0, size=50):
         result = self.get("/api/v1/series", page=page, size=size)
         if (not isinstance(result, dict) or not isinstance(result.get("content"), list)
@@ -53,11 +85,11 @@ class KomgaClient:
     def request(self, method, endpoint, body=None, **params):
         if method == "GET":
             return self.get(endpoint, **params)
-        if not self.settings.komga_url or not os.getenv(self.settings.api_key_env, ""):
+        if not self.settings.komga_url or not secret(self.settings, self.settings.api_key_env):
             raise KomgaError("Komgaの接続先とAPIキーを設定してください。")
         try:
             response = self.session.request(method, self.settings.komga_url + endpoint, params=params, json=body,
-                headers={"X-API-Key": os.environ[self.settings.api_key_env], "Accept": "application/json"},
+                headers={"X-API-Key": secret(self.settings, self.settings.api_key_env), "Accept": "application/json"},
                 timeout=self.settings.timeout_seconds, allow_redirects=False)
             if not 200 <= response.status_code < 300:
                 raise KomgaError("Komgaの操作に失敗しました。接続先と権限を確認してください。")
