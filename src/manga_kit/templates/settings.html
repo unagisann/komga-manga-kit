@@ -1,19 +1,103 @@
 {% extends 'base.html' %}{% import 'components.html' as ui %}
-{% block title %}設定{% endblock %}
+{% block title %}環境設定{% endblock %}
+{% block scripts %}<script src="{{ asset_url('tools_settings.js') }}" defer></script>{% endblock %}
 {% block content %}
-<a class="button section" href="{{ url_for('maintenance.settings') }}">接続・情報源・AI・認証情報を設定</a>
-<div class="page-heading"><div><p class="eyebrow">SETTINGS</p><h1>自分のライブラリに合わせる</h1><p>保存先、Komga接続、見た目の名前。設定はひとつのファイルに。</p></div></div>
-<section class="panel section"><div class="panel-heading"><h2>楽天Booksの書誌検索</h2><span class="chip">{{ '架空データでお試し' if settings.demo else '設定済み' if catalog.configured else '未設定' }}</span></div><p class="muted">自動補完で作品をまとめて選び、読み・著者・出版社などの不足項目を補えます。取得した内容を確認して保存します。</p><p class="muted">config.yaml の <code>rakuten.enabled: true</code> と、環境変数 <code>{{ settings.rakuten.application_id_env }}</code>・<code>{{ settings.rakuten.access_key_env }}</code> を設定します。楽天に登録したオリジンを送る場合は <code>rakuten.origin</code> を指定してください。変更後は再起動します。</p><p class="form-hint">自動補完の候補取得や個別検索を始めたときだけ通信します。デモ中は認証設定にかかわらず架空の書誌データを使用します。</p><a class="button" href="/metadata">補完する作品を選ぶ</a></section>
-<section class="panel section"><div class="panel-heading"><h2>AniListのタグ・ジャンル補完</h2><span class="chip">{{ '架空データでお試し' if settings.demo else '有効' if catalogs.anilist.configured else '無効（既定）' }}</span></div><p class="muted">作品名で漫画を探し、ジャンルとタグを確認して保存できます。楽天Booksの対応付けと一緒に保持します。同梱の対訳表で日本語にし、成人向け・関連度の低いタグやネタバレ指定のタグは除外します。</p><p class="muted">config.yaml の <code>anilist.enabled: true</code> を設定し、再起動してください。APIキーは不要です。自動補完の候補取得や個別検索を始めたときだけ作品名をAniListへ送信します。デモは架空データを使います。</p><a class="button" href="/metadata">補完する作品を選ぶ</a></section>
-<section class="panel section"><div class="panel-heading"><h2>作品情報と処理履歴の保存先</h2></div><p><code>{{ settings.data_root }}</code></p><p class="muted">漫画ライブラリと分けて、読みの編集・処理結果・操作履歴を保存します。保存先は data.root または MANGA_KIT_DATA_ROOT で指定します。</p></section>
-<section class="panel section"><div class="panel-heading"><h2>Komgaと蔵書のパス対応</h2></div>{% if settings.path_mappings %}<dl class="settings-list">{% for mapping in settings.path_mappings %}<dt><code>{{ mapping.komga }}</code></dt><dd><code>{{ mapping.local }}</code></dd>{% endfor %}</dl>{% else %}<p class="muted">config.yaml の komga.path_mappings で、Komga側の保存先とこのツール側の保存先を対応付けます。</p>{% endif %}<button class="button" id="match-komga" {% if settings.demo or not settings.path_mappings %}disabled{% endif %}>対応する作品を確認</button><p id="match-result" class="form-hint" role="status"></p><ul id="match-list" class="connection-libraries"></ul></section>
-<div class="settings-grid"><section class="panel"><div class="panel-heading"><h2>{{ ui.icon('plug', 19) }}Komga接続</h2><span class="chip {{ 'completed' if settings.komga_url and key_configured else 'unknown' }}">{{ '設定済み' if settings.komga_url and key_configured else '未設定' }}</span></div><dl class="settings-list"><dt>接続先</dt><dd>{{ settings.komga_url or '未設定' }}</dd><dt>APIキー</dt><dd>{{ '登録あり（非表示）' if key_configured else '未登録' }}</dd></dl><p class="muted">接続先は <code>config.yaml</code> または <code>KOMGA_URL</code>、キーは環境変数 <code>{{ settings.api_key_env }}</code> で指定します。</p><button class="button primary" id="test-komga">{{ ui.icon('plug', 17) }}接続を確認</button><div id="komga-result" class="connection-result" role="status" hidden></div><ul id="komga-libraries" class="connection-libraries"></ul></section>
-<section class="panel"><div class="panel-heading"><h2>{{ ui.icon('folder', 19) }}ライブラリ</h2><span class="chip">{{ 'デモ' if settings.demo else 'ローカル' }}</span></div><dl class="settings-list"><dt>保存先</dt><dd><code>{{ settings.library_root }}</code></dd><dt>ファイル上限</dt><dd>{{ settings.max_files }}</dd><dt>連載中 / 完結</dt><dd>{{ settings.layout.ongoing_folder }} / {{ settings.layout.completed_folder }}</dd></dl><p class="muted">自分の蔵書を表示するには <code>app.demo: false</code> と <code>library.root</code> を設定し、再起動してください。</p><a class="button" href="/organize">整理ルールを試す {{ ui.icon('arrow', 17) }}</a></section></div>
-<section class="panel section"><div class="panel-heading"><h2>Webのノーマライズ実行</h2><span class="chip">{{ '有効' if settings.web_execution_enabled and not settings.demo else '無効（プレビュー専用）' }}</span></div><p class="muted">設定ファイルで以下を指定し、再起動すると、変更内容の確認後にCBZ化・ページ順・名前と配置の整理を実行できます。元書庫は実行データへバックアップします。</p><pre class="config-example">execution:
+<div class="page-heading"><div><p class="eyebrow">SETTINGS</p><h1>環境設定</h1><p>Webで変えられる設定と、設定ファイルで決める項目をまとめています。Webで保存した設定は再起動しなくても反映されます。</p></div></div>
+<nav class="settings-toc" aria-label="設定の項目">{% for anchor, label in [('display', '表示するメニュー'), ('komga', 'Komga'), ('sources', '情報源'), ('ai', 'AI補助'), ('notify', '新刊通知・読書状況'), ('credentials', '認証情報'), ('config', '設定ファイルで決める項目')] %}<a href="#{{ anchor }}">{{ label }}</a>{% endfor %}</nav>
+
+<section class="panel section settings-block" id="display" aria-labelledby="display-title">
+  <div class="panel-heading"><h2 id="display-title">表示するメニュー</h2></div>
+  <p class="muted">ヘッダーとポータルに出す項目と順番を選びます。「管理」は環境設定へ戻れるよう、ヘッダーに常に表示します。</p>
+  <form id="menu-settings" data-revision="{{ menus.revision }}">
+    <div class="menu-columns">
+      {% for name, title in [('header', 'ヘッダー'), ('portal', 'ポータルの機能一覧')] %}
+      <fieldset class="menu-list"><legend>{{ title }}</legend>
+        <ol data-menu="{{ name }}">{% for row in menus[name] %}
+          <li data-id="{{ row.id }}"><label><input type="checkbox"{% if row.shown %} checked{% endif %}{% if row.locked %} disabled{% endif %}>{{ ui.icon(row.icon, 15) }}<span>{{ row.label }}</span>{% if row.locked %}<small>常に表示</small>{% endif %}</label><span class="menu-move"><button type="button" class="icon-button" data-move="-1" aria-label="{{ row.label }}を上へ">↑</button><button type="button" class="icon-button" data-move="1" aria-label="{{ row.label }}を下へ">↓</button></span></li>{% endfor %}
+        </ol>
+      </fieldset>
+      {% endfor %}
+    </div>
+    <div class="settings-actions"><p id="menu-status" class="form-hint" role="status"></p><button class="button" type="button" id="menu-reset">既定に戻す</button><button class="button primary">メニューを保存</button></div>
+  </form>
+</section>
+
+<form id="tools-settings" data-revision="{{ preferences.revision }}">
+<section class="panel section settings-block" id="komga" aria-labelledby="komga-title">
+  <div class="panel-heading"><h2 id="komga-title">{{ ui.icon('plug', 19) }}Komga</h2><span class="chip {{ 'completed' if settings.komga_url and key_configured else 'unknown' }}">{{ '接続設定あり' if settings.komga_url and key_configured else '未設定' }}</span></div>
+  <div class="tool-facts">
+    <label>Komga接続先<input name="komga_url" type="url" value="{{ preferences.komga_url }}" placeholder="http://localhost:25600"></label>
+    <label>ブラウザーで開くKomga URL<input name="public_komga_url" type="url" value="{{ preferences.tools.public_komga_url }}" placeholder="空欄なら接続先と同じ"></label>
+  </div>
+  <p class="form-hint">APIキーは下の「認証情報」か、環境変数 <code>{{ settings.api_key_env }}</code> で登録します（{{ '登録済み' if key_configured else '未登録' }}）。</p>
+  <button class="button" type="button" id="test-komga">{{ ui.icon('plug', 17) }}接続を確認</button>
+  <div id="komga-result" class="connection-result" role="status" hidden></div><ul id="komga-libraries" class="connection-libraries"></ul>
+  <h3>Komgaと蔵書のパス対応</h3>
+  {% if settings.path_mappings %}<dl class="settings-list">{% for mapping in settings.path_mappings %}<dt><code>{{ mapping.komga }}</code></dt><dd><code>{{ mapping.local }}</code></dd>{% endfor %}</dl>{% endif %}
+  <p class="form-hint">設定ファイルの <code>komga.path_mappings</code> で、Komga側の保存先とこのツール側の保存先を対応付けます。</p>
+  <button class="button" type="button" id="match-komga" {% if settings.demo or not settings.path_mappings %}disabled{% endif %}>対応する作品を確認</button><p id="match-result" class="form-hint" role="status"></p><ul id="match-list" class="connection-libraries"></ul>
+</section>
+
+<section class="panel section settings-block" id="sources" aria-labelledby="sources-title">
+  <div class="panel-heading"><h2 id="sources-title">情報源</h2><span class="chip">{{ '架空データでお試し' if settings.demo else '楽天Books: ' ~ ('設定済み' if catalog.configured else '未設定') }}</span></div>
+  <p class="muted">有効にした情報源だけを、更新操作や自動更新で使います。ページを開いただけでは通信しません。</p>
+  <div class="settings-checks">
+    <label><input name="rakuten_enabled" type="checkbox" {% if preferences.rakuten.enabled %}checked{% endif %}>楽天Books（書誌・新刊）</label>
+    {% for name, label in [('kobo_enabled', '楽天Kobo（電子書籍）'), ('mangaupdates_enabled', 'MangaUpdates')] %}<label><input name="{{ name }}" type="checkbox" {% if preferences.tools[name] %}checked{% endif %}>{{ label }}</label>{% endfor %}
+    <label><input name="anilist_enabled" type="checkbox" {% if preferences.anilist.enabled %}checked{% endif %}>AniList（タグ・ジャンル）</label>
+    {% for name, label in [('anime_enabled', '今期アニメ'), ('discovery_enabled', '漫画の発見'), ('rankings_enabled', '次にくるマンガ大賞')] %}<label><input name="{{ name }}" type="checkbox" {% if preferences.tools[name] %}checked{% endif %}>{{ label }}</label>{% endfor %}
+  </div>
+  <div class="tool-facts"><label>楽天に登録したオリジン<input name="rakuten_origin" type="url" value="{{ preferences.rakuten.origin }}"></label></div>
+  <p class="form-hint">楽天のアプリIDとアクセスキーは「認証情報」で登録します。AniListはAPIキー不要です。デモ中は架空のデータを使います。</p>
+</section>
+
+<section class="panel section settings-block" id="ai" aria-labelledby="ai-title">
+  <div class="panel-heading"><h2 id="ai-title">AI補助</h2></div>
+  <div class="settings-checks"><label><input name="ai_enabled" type="checkbox" {% if preferences.tools.ai_enabled %}checked{% endif %}>AI補助を使う</label></div>
+  <div class="tool-facts">
+    <label>AI API方式<select name="ai_provider"><option value="chat" {% if preferences.tools.ai_provider == 'chat' %}selected{% endif %}>Chat Completions互換</option><option value="gemini" {% if preferences.tools.ai_provider == 'gemini' %}selected{% endif %}>Gemini</option></select></label>
+    <label>AI APIのベースURL<input name="ai_url" type="url" value="{{ preferences.tools.ai_url }}" placeholder="https://your-provider.example/v1"></label>
+    <label>モデル名<input list="ai-models" name="ai_model" maxlength="200" value="{{ preferences.tools.ai_model }}"></label><datalist id="ai-models"></datalist>
+  </div>
+  <button type="button" class="button" id="ai-models-refresh">利用できるモデルを確認</button>
+</section>
+
+<section class="panel section settings-block" id="notify" aria-labelledby="notify-title">
+  <div class="panel-heading"><h2 id="notify-title">新刊通知・読書状況</h2></div>
+  <div class="settings-checks"><label><input name="notify_enabled" type="checkbox" {% if preferences.tools.notify_enabled %}checked{% endif %}>新刊が見つかったら通知する</label></div>
+  <div class="tool-facts"><label>読書状況のアカウント（JSON）<textarea name="reading_accounts" rows="4">{{ preferences.tools.reading_accounts|tojson }}</textarea></label></div>
+  <p class="form-hint">例: [{"name":"自分","api_key_env":"KOMGA_READER_KEY"}]。各アカウント本人のAPIキーを登録します。</p>
+</section>
+<div class="settings-save"><p id="tool-status" class="form-hint" role="status" hidden></p><button class="button primary">Komga・情報源・AI・通知を保存</button></div>
+</form>
+
+<section class="panel section settings-block" id="credentials" aria-labelledby="credentials-title">
+  <div class="panel-heading"><h2 id="credentials-title">認証情報</h2></div>
+  <p class="muted">環境変数を優先します。{% if preferences.credential_file_enabled %}入力した値は専用ファイルへ保存します。空欄の項目は変更しません。{% else %}Webで登録する場合は、設定ファイルの <code>tools.credentials_file</code> にライブラリ外の専用保存先を指定してください。{% endif %}</p>
+  <form id="tools-credentials" class="tool-facts">{% for name, configured in preferences.credentials|dictsort %}<label>{{ name }} · {{ '登録済み' if configured else '未登録' }}<input name="{{ name }}" type="password" autocomplete="new-password" maxlength="4096" {% if not preferences.credential_file_enabled %}disabled{% endif %}></label>{% endfor %}<button class="button" {% if not preferences.credential_file_enabled %}disabled{% endif %}>認証情報を保存</button></form>
+</section>
+
+<section class="panel section settings-block" id="config" aria-labelledby="config-title">
+  <div class="panel-heading"><h2 id="config-title">設定ファイルで決める項目</h2><span class="muted">config.yaml</span></div>
+  <p class="muted">次の項目は設定ファイルで指定し、再起動すると反映されます。ここでは現在の値を表示します。</p>
+  <dl class="settings-list">
+    <dt>ライブラリ</dt><dd><code>{{ settings.library_root }}</code>（{{ 'デモ' if settings.demo else 'ローカル' }}）</dd>
+    <dt>ファイル上限</dt><dd>{{ settings.max_files }}</dd>
+    <dt>連載中 / 完結 / 未分類</dt><dd>{{ settings.layout.ongoing_folder }} / {{ settings.layout.completed_folder }} / {{ settings.layout.unknown_folder }}</dd>
+    <dt>実行データの保存先</dt><dd><code>{{ settings.data_root }}</code></dd>
+    <dt>Webのノーマライズ実行</dt><dd>{{ '有効' if settings.web_execution_enabled and not settings.demo else '無効（プレビュー専用）' }}</dd>
+    <dt>CLIの整理実行</dt><dd>{{ '有効' if settings.execution_enabled else '無効（既定）' }}</dd>
+  </dl>
+  <a class="button" href="{{ url_for('organize.index') }}">整理ルールを試す {{ ui.icon('arrow', 17) }}</a>
+  <details class="section"><summary>実行を有効にする方法</summary>
+    <p class="muted">設定ファイルで以下を指定して再起動すると、変更内容の確認後にCBZ化・ページ順・名前と配置の整理を実行できます。元書庫は実行データへバックアップします。移動・CBZ生成・Komgaへの反映と復元は <code>execution.enabled: true</code> にしたCLIからも使えます。</p>
+    <pre class="config-example">execution:
   enabled: true
-  web_enabled: true</pre><p class="form-hint">ローカル以外から実行する場合は MANGA_KIT_ADMIN_TOKEN による管理者認証が必要です。Komga 1.29.1では、移動後に同じパスでCBZを再生成し、書籍ID・既読位置・読了日を照合します。ページ数が変わる削除は対象外です。</p></section>
-<section class="panel section"><div class="panel-heading"><h2>CLIの整理実行</h2><span class="chip">{{ '有効' if settings.execution_enabled else '無効（既定）' }}</span></div><p class="muted">移動・CBZ生成・バックアップ・復元と、Komgaへの作品情報の反映・復元は、設定で execution.enabled: true にしたCLIから利用できます。Webからのノーマライズ・Komga反映は、以下の追加設定で有効にできます。手順とKomga連携の条件はREADMEの整理実行ガイドを参照してください。</p></section>
-<section class="panel section"><div class="panel-heading"><h2>設定ファイルの例</h2><span class="muted">config.yaml</span></div><pre class="config-example">app:
+  web_enabled: true</pre>
+    <p class="form-hint">ローカル以外から実行する場合は MANGA_KIT_ADMIN_TOKEN による管理者認証が必要です。Komga 1.29.1では、移動後に同じパスでCBZを再生成し、書籍ID・既読位置・読了日を照合します。ページ数が変わる削除は対象外です。</p>
+  </details>
+  <details class="section"><summary>設定ファイルの例</summary>
+    <pre class="config-example">app:
   name: {{ settings.name }}
   demo: false
 library:
@@ -27,5 +111,8 @@ layout:
   completed: "{status}/{kana_row}/{series}"
 komga:
   base_url: http://localhost:25600
-  api_key_env: KOMGA_API_KEY</pre><p class="form-hint">APIキーは設定ファイルに含めず、環境変数から読み取ります。詳細はプロジェクトのREADMEを参照してください。</p></section>
+  api_key_env: KOMGA_API_KEY</pre>
+    <p class="form-hint">APIキーは設定ファイルに含めず、環境変数か「認証情報」から読み取ります。詳細はプロジェクトのREADMEを参照してください。</p>
+  </details>
+</section>
 {% endblock %}

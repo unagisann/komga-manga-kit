@@ -34,7 +34,7 @@ class ToolsTests(unittest.TestCase):
 
     def test_tools_pages_never_fetch_on_get_and_render_owned_links(self):
         with patch('requests.Session.request', side_effect=AssertionError('implicit network')):
-            for path in ['/anime', '/discovery', '/discovery?source=natalie', '/tsugimanga', '/new_volumes', '/settings/tools']:
+            for path in ['/anime', '/discovery', '/discovery?source=natalie', '/tsugimanga', '/new_volumes', '/settings']:
                 with self.subTest(path=path):
                     self.assertEqual(self.client.get(path).status_code, 200)
             row = self.app.extensions['inventory'].cached()['series'][0]

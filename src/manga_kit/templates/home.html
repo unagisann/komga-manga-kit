@@ -16,20 +16,12 @@
 </section>
 
 {% set komga = settings.tools.public_komga_url or settings.komga_url %}
-<nav class="pv-quick" aria-label="主な機能">
-  {% if komga %}<a href="{{ komga }}">{{ ui.icon('book', 18) }}<span class="t">Komgaで読む</span><span class="d">ライブラリ本体をブラウザで開く</span></a>
-  {% else %}<a href="{{ url_for('maintenance.settings') }}">{{ ui.icon('plug', 18) }}<span class="t">Komgaとつなぐ</span><span class="d">接続先を設定すると、ここからライブラリ本体を開ける</span></a>{% endif %}
-  {% for endpoint, icon, title, description in [
-    ('library.index', 'search', '蔵書を探す', '読者層・出版社・年代・評価で絞り込み'),
-    ('tools.discovery', 'compass', '発見', '紹介記事・楽天Kobo売上・マンバ通信・コミックナタリー'),
-    ('tools.new_volumes', 'square-plus', '新刊チェック', '所持シリーズの新刊・予約状況（楽天Books＋Kobo）'),
-    ('tools.anime', 'tv', '今期のアニメ', '放送中アニメの原作を所持判定。持っている作品はすぐ読める'),
-    ('tools.rankings', 'chart', '次にくるマンガ大賞', '歴代ランキング（2015〜）を所持状況つきで'),
-    ('normalize.index', 'refresh', '追加した漫画を整理', 'CBZ化・ページ順・名前と配置をまとめて整える'),
-    ('management.index', 'sliders', '管理', '補完・表紙修正・完結移動・処理履歴・設定')] %}
-  <a href="{{ url_for(endpoint) }}">{{ ui.icon(icon, 18) }}<span class="t">{{ title }}</span><span class="d">{{ description }}</span></a>
-  {% endfor %}
-</nav>
+{#- 並びと表示は環境設定の「表示するメニュー」で変えられる。 -#}
+{% if portal_links %}<nav class="pv-quick" aria-label="主な機能">
+  {% for link in portal_links %}{% if link.id == 'komga' %}{% if komga %}<a href="{{ komga }}">{{ ui.icon('book', 18) }}<span class="t">{{ link.label }}</span><span class="d">{{ link.description }}</span></a>
+  {% else %}<a href="{{ url_for('settings.index', _anchor='komga') }}">{{ ui.icon('plug', 18) }}<span class="t">Komgaとつなぐ</span><span class="d">接続先を設定すると、ここからライブラリ本体を開ける</span></a>{% endif %}
+  {% else %}<a href="{{ url_for(link.endpoint) }}">{{ ui.icon(link.icon, 18) }}<span class="t">{{ link.label }}</span><span class="d">{{ link.description }}</span></a>{% endif %}{% endfor %}
+</nav>{% endif %}
 
 <div id="portal-library" data-url="{{ url_for('api.portal_library') }}" aria-busy="true">
   <p class="pv-empty" role="status">蔵書を読み込んでいます…</p>

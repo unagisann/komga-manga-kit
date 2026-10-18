@@ -35,7 +35,7 @@
   </div>
 </header>
 {% if settings.demo %}<div class="demo-bar"><span class="status-dot"></span>サンプル蔵書でお試し中 <span class="demo-description">架空の作品を使って機能を確認できます。</span><a href="/settings">自分の蔵書を設定 {{ ui.icon('arrow', 14) }}</a></div>{% endif %}
-<main id="main" class="container">{% block content %}{% endblock %}</main>
+<main id="main" class="container">{% if management_tab %}<nav class="manage-tabs" aria-label="管理の切り替え">{% for tab in management_tabs %}<a href="{{ url_for(tab.endpoint) }}" class="{{ 'active' if tab == management_tab else '' }}"{% if tab == management_tab %} aria-current="{{ 'page' if request.endpoint == tab.endpoint else 'true' }}"{% endif %}>{{ ui.icon(tab.icon, 15) }}{{ tab.label }}</a>{% endfor %}</nav>{% endif %}{% block content %}{% endblock %}</main>
 <footer class="app-footer"><span>{{ ui.icon('book', 16) }} {{ settings.name }} <span class="muted">{{ version }}</span></span><span>自分の蔵書を、自分らしく。<a href="/roadmap">これからの機能 {{ ui.icon('arrow', 14) }}</a></span>{% if settings.rakuten.enabled and not settings.demo %}<span><!-- Rakuten Web Services Attribution Snippet FROM HERE -->
 <a href="https://developers.rakuten.com/" target="_blank">Supported by Rakuten Developers</a>
 <!-- Rakuten Web Services Attribution Snippet TO HERE --></span>{% endif %}</footer>

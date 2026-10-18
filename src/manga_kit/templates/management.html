@@ -1,24 +1,28 @@
 {% extends 'base.html' %}{% import 'components.html' as ui %}
-{% block title %}管理{% endblock %}
+{% block title %}メンテナンス{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">MANAGEMENT</p><h1>ライブラリの管理</h1><p>追加した漫画のノーマライズ、作品情報の補完・修正、処理履歴と接続設定をまとめています。</p></div></div>
-<div class="management-grid">
-  {% for endpoint, title, description, icon in [
-    ('normalize.index', '追加した漫画をノーマライズ', '作品フォルダへ追加した漫画の差分を確認し、CBZ化・ページ順・名前と配置を整えます。', 'refresh'),
-    ('organize.index', '整理ルール', 'フォルダや巻名のルールを試し、ライブラリ全体の配置を確認します。', 'folder'),
-    ('metadata.index', '作品情報の補完・個別確認', '読み・著者・出版社などの不足情報を取得して確認します。', 'book'),
-    ('management.metadata', '作品情報の手動修正', '自動補完で取得できなかった項目や、誤った作品情報を修正します。', 'tag'),
-    ('maintenance.completion', '完結作品の移動', '完結情報を確認した作品の移動先・衝突を確認して整理します。', 'folder'),
-    ('maintenance.komga_sync', 'Komgaへの反映', '補完した作品情報・著者・タグと完結状態をKomgaへ反映します。', 'plug'),
-    ('maintenance.page_books', '表紙・ページ修正', '表紙変更・並べ替え・不要ページの削除と復元を行います。', 'book'),
-    ('maintenance.ai', 'AI補助', '読み・あらすじ・読者層の提案を確認して保存します。', 'tag'),
-    ('maintenance.shelves', 'スマート本棚', '今期アニメ・受賞作・新刊・完結作品の本棚をKomgaに同期します。', 'book'),
-    ('maintenance.automation', '自動更新・取り込み後の処理', '実行する情報源・補完ステップ・時刻と結果を管理します。', 'refresh'),
-    ('jobs.index', '処理履歴', 'ノーマライズなどの進捗・結果を確認し、過去の操作の復元画面を開きます。', 'refresh'),
-    ('settings.index', '設定・接続', 'ライブラリの保存先、補完サービス、Komgaとの接続を設定します。', 'plug'),
-    ('roadmap.index', 'ロードマップ', '現在使える機能と、今後の対応予定を確認します。', 'route')
-  ] %}
-  <a class="panel management-card" href="{{ url_for(endpoint) }}"><span class="quick-icon">{{ ui.icon(icon, 24) }}</span><h2>{{ title }}</h2><p>{{ description }}</p><span class="text-link">開く {{ ui.icon('arrow', 17) }}</span></a>
-  {% endfor %}
-</div>
+<div class="page-heading"><div><p class="eyebrow">MAINTENANCE</p><h1>メンテナンス</h1><p>蔵書のファイルと作品情報を整えます。どの処理も、変更内容を確認してから実行し、処理履歴から復元できます。</p></div></div>
+{#- 実行する処理だけを、作業の順番に並べる。設定は「環境設定」、記録は「処理履歴」のタブにある。 -#}
+{% for group, description, tasks in [
+  ('取り込み', '作品フォルダへ漫画を追加したら、ここから始めます。', [
+    ('normalize.index', '追加した漫画をノーマライズ', '追加・変更された書庫の差分を確認し、CBZ化・ページ順・名前と配置を整えます。', 'refresh')]),
+  ('作品情報', '読み・著者・あらすじなどを補い、誤りを直します。', [
+    ('metadata.index', '補完・個別確認', '不足している読み・著者・出版社などを取得して確認します。', 'tag'),
+    ('management.metadata', '手動修正', '自動補完で取得できなかった項目や、誤った作品情報を修正します。', 'tag'),
+    ('maintenance.ai', 'AI補助', '読み・あらすじ・読者層の提案を確認して保存します。', 'tag')]),
+  ('ファイル', '書庫の中身と置き場所を整えます。', [
+    ('maintenance.page_books', '表紙・ページ修正', '表紙変更・並べ替え・不要ページの削除と復元を行います。', 'image'),
+    ('maintenance.completion', '完結作品の移動', '完結した作品の移動先・衝突を確認して整理します。', 'folder')]),
+  ('Komga', '整えた内容をKomgaへ送ります。', [
+    ('maintenance.komga_sync', '作品情報の反映', '補完した作品情報・著者・タグと完結状態をKomgaへ反映します。', 'plug'),
+    ('maintenance.shelves', 'スマート本棚の同期', '今期アニメ・受賞作・新刊・完結作品の本棚をKomgaに同期します。', 'book')])
+] %}
+<section class="management-group" aria-labelledby="group-{{ loop.index }}">
+  <div class="management-group-head"><h2 id="group-{{ loop.index }}">{{ group }}</h2><p>{{ description }}</p></div>
+  <div class="management-grid">
+    {% for endpoint, title, text, icon in tasks %}<a class="panel management-card" href="{{ url_for(endpoint) }}"><span class="quick-icon">{{ ui.icon(icon, 24) }}</span><h3>{{ title }}</h3><p>{{ text }}</p><span class="text-link">開く {{ ui.icon('arrow', 17) }}</span></a>{% endfor %}
+    {% if loop.first %}<div class="panel management-card"><span class="quick-icon">{{ ui.icon('search', 24) }}</span><h3>蔵書を再スキャン</h3><p>ファイルを直接追加・削除したときに、蔵書の一覧を読み直します。書庫は変更しません。</p><button class="button" id="refresh-library" type="button">{{ ui.icon('refresh', 16) }}読み直す</button></div>{% endif %}
+  </div>
+</section>
+{% endfor %}
 {% endblock %}

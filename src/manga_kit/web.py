@@ -133,7 +133,7 @@ def paginate(entries, size=60):
 
 @home.get("/")
 def index():
-    return render_template("home.html")
+    return render_template("home.html", portal_links=current_app.extensions["menus"].shown("portal"))
 
 
 @api.get("/portal/library")
@@ -426,7 +426,18 @@ def settings_index():
     config = configuration()
     return render_template("settings.html", key_configured=bool(secret(config, config.api_key_env)), layout=asdict(config.layout),
                            catalog=current_app.extensions["enrichment"].status(),
-                           catalogs=current_app.extensions["enrichment"].statuses())
+                           preferences=current_app.extensions["preferences"].view(),
+                           menus=current_app.extensions["menus"].view())
+
+
+@api.post("/menus")
+def save_menus():
+    require_admin_access()
+    body = body_with_keys({"revision", "header", "portal"}, {"revision", "header", "portal"})
+    revision = body.pop("revision")
+    if type(revision) is not int or revision < 0:
+        raise ConfigError("設定の版を確認してください。")
+    return jsonify(current_app.extensions["menus"].save(body, revision))
 
 
 @roadmap.get("/roadmap", endpoint="index")

@@ -1,5 +1,5 @@
 """Management actions for the existing Tools feature set."""
-from flask import Blueprint, current_app, jsonify, render_template, request
+from flask import Blueprint, current_app, jsonify, redirect, render_template, request, url_for
 
 from .credentials import save_credentials
 from .web import body_with_keys, require_admin_access
@@ -9,7 +9,8 @@ maintenance = Blueprint("maintenance", __name__)
 
 @maintenance.get("/settings/tools")
 def settings():
-    return render_template("tools_settings.html", preferences=current_app.extensions["preferences"].view())
+    # Connections and sources now share the single settings page.
+    return redirect(url_for("settings.index", _anchor="komga"))
 
 
 @maintenance.post("/api/tools/settings")

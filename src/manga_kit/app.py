@@ -11,7 +11,7 @@ from werkzeug.exceptions import HTTPException
 
 from . import __version__
 from .config import ConfigError, load_settings
-from .features import built_in_features, navigation_items
+from .features import MANAGEMENT_TABS, built_in_features, management_tab, navigation_items, portal_links
 from .catalogs import CatalogError
 from .enrichment import EnrichmentService
 from .auto_enrichment import AutoEnrichmentService
@@ -78,7 +78,8 @@ def create_app(config_path=None, *, settings=None, features=None):
     import atexit
     atexit.register(automation.shutdown)
     registry = list(built_in_features() if features is None else features)
-    navigation = navigation_items(registry)
+    from .menus import Menus
+    menus = app.extensions["menus"] = Menus(store, navigation_items(registry), portal_links(registry))
     if len({feature.id for feature in registry}) != len(registry):
         raise ConfigError("機能IDが重複しています。")
     for feature in registry:
@@ -112,12 +113,15 @@ def create_app(config_path=None, *, settings=None, features=None):
         active = (feature.parent or feature.id) if feature else section
         if request.endpoint == "metadata.metadata_detail":
             active = "management"
+        navigation = menus.shown("header")
         selected = next((item.endpoint for item in navigation
                          if request.endpoint == item.endpoint or request.endpoint in item.related_endpoints), None)
         if selected is None:
             selected = next((item.endpoint for item in registry if item.id == active), None)
+        tab = management_tab(request.endpoint)
         return {"settings": settings, "features": registry, "navigation": navigation,
                 "active_navigation": selected, "version": __version__,
+                "management_tabs": MANAGEMENT_TABS if tab else (), "management_tab": tab,
                 "metadata_labels": {"title": "作品名", "author": "著者", "reading": "読み", "publisher": "出版社",
                                     "status": "状態", "summary": "あらすじ", "genres": "ジャンル", "tags": "タグ", "authors": "著者・役割"},
                 "provider_labels": PROVIDER_LABELS,
