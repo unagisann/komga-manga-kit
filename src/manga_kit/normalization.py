@@ -11,6 +11,7 @@ from .komga import KomgaError
 from .durability import durable_mkdir, sync_directory, sync_file
 from .filesystem import LibraryFilesystem, file_hash
 from .metadata import FIELDS
+from .normalization_scope import NormalizationTargets, within
 from .operations import OperationService, digest
 from .organizer import plan_organization
 from .state import StateConflict
@@ -183,22 +184,38 @@ class NormalizationService:
     def __init__(self, settings, library, store, jobs):
         self.settings, self.library, self.store, self.jobs = settings, library, store, jobs
         self.operations = NormalizationOperations(settings, store)
+        self.targets = NormalizationTargets(settings, store, self.operations.guard.client)
 
     def _context(self, series):
         return digest({key: getattr(series, key) for key in FIELDS})
 
-    def check(self, progress):
+    def check(self, progress, options=None, *, resolved_scope=None):
+        if resolved_scope is not None:
+            self.targets.verify(resolved_scope)
+        scope = resolved_scope or self.targets.resolve(options)
         scanned = self.library.scan(refresh=True, reuse_metadata=True)
+        scoped = [series for series in scanned.series if within(series.path, scope["roots"])]
+        scope_count = sum(len(series.books) for series in scoped)
+        limited = scope_count > scope["limit"]
+        selected_paths, count = set(), 0
+        for series in scoped:
+            if count + len(series.books) > scope["limit"]:
+                break
+            selected_paths.update(book.path for book in series.books)
+            count += len(series.books)
         rules = digest(asdict(self.settings.layout))
         previous = self.store.normalization_files()
         inventory, changed, recipes, archive_errors = {}, {}, {}, {}
+        processed = 0
         with LibraryFilesystem(self.settings.library_root) if not self.settings.demo else _demo_filesystem() as fs:
             for series in scanned.series:
                 for book in series.books:
                     signature = fs.signature(book.path) if fs else {"demo": True}
                     value = {"signature": signature, "metadata": self._context(series), "rules": rules}
                     inventory[book.path] = value
-                    if previous.get(book.path) != value:
+                    if book.path not in selected_paths:
+                        continue
+                    if scope["recheck"] or previous.get(book.path) != value:
                         changed[book.path] = "added" if book.path not in previous else "modified"
                         if fs and PurePosixPath(book.path).suffix.lower() in FORMATS:
                             try:
@@ -207,14 +224,16 @@ class NormalizationService:
                                     recipes[book.path] = recipe
                             except (ConfigError, StateConflict, OSError):
                                 archive_errors[book.path] = "書庫を検証できません。破損・暗号化・ページ順・ComicInfo.xmlを確認してください。"
-                    progress(len(inventory), scanned.stats()["books"])
+                    processed += 1
+                    progress(processed, len(selected_paths))
             preview = plan_organization(scanned.series, self.settings.layout, None if self.settings.demo else self.settings.library_root, normalize=True)
             owners = {book.path: series for series in scanned.series for book in series.books}
             affected = {owners[path].id for path in changed}
             folders = [PurePosixPath(series.path) for series in scanned.series if series.id in affected and series.path != "."]
             affected.update(series.id for series in scanned.series
                             if any(PurePosixPath(series.path).is_relative_to(folder) for folder in folders))
-            items = [item for item in preview["items"] if owners[item["source"]].id in affected]
+            items = [item for item in preview["items"] if owners[item["source"]].id in affected
+                     and item["source"] in selected_paths]
             for item in items:
                 item["change"] = changed.get(item["source"], "existing")
                 item["series_id"] = owners[item["source"]].id
@@ -249,7 +268,7 @@ class NormalizationService:
                     blocked.add(item["series_id"])
             selected = {item["series_id"] for item in items if item["state"] == "ready"} - blocked
             operation, preparation_error = None, ""
-            if selected and self.settings.execution_enabled and not self.settings.demo and not scanned.truncated:
+            if selected and self.settings.execution_enabled and not self.settings.demo and not scanned.truncated and not limited:
                 try:
                     active_recipes = {path: recipe for path, recipe in recipes.items() if owners[path].id in selected}
                     operation = self.operations.prepare(selected=sorted(selected), archives=active_recipes)
@@ -263,19 +282,60 @@ class NormalizationService:
                 except (ConfigError, StateConflict, KomgaError) as error:
                     preparation_error = str(error)
                     operation = None
-        removed = sorted(set(previous) - set(inventory))
+        removed = sorted(path for path in set(previous) - set(inventory) if within(path, scope["roots"]))
         if not scanned.truncated and not scanned.warnings:
             compliant = {item["source"]: inventory[item["source"]] for item in items if item["state"] == "unchanged"}
             self.store.remember_normalization(compliant, removed)
-        return {"items": items, "inventory": inventory, "removed": removed, "truncated": scanned.truncated,
+        return {"items": items, "inventory": inventory, "tracked": sorted(selected_paths), "scope": scope,
+                "limit_reached": limited, "scope_count": scope_count,
+                "removed": removed, "truncated": scanned.truncated,
                 "warnings": scanned.warnings, "layout": asdict(self.settings.layout), "preparation_error": preparation_error,
                 "operation_id": operation["plan"]["id"] if operation else None, "digest": operation["digest"] if operation else None,
                 "counts": {**{state: sum(item["state"] == state for item in items) for state in ("ready", "blocked", "unchanged")},
                            "added": sum(value == "added" for value in changed.values()), "modified": sum(value == "modified" for value in changed.values()),
-                           "removed": len(removed), "scanned": len(inventory)}}
+                           "removed": len(removed), "scanned": processed}}
 
-    def submit_check(self):
-        return self.jobs.submit_task("normalization_check", self.check)
+    def submit_check(self, options=None):
+        scope = self.targets.resolve(options)
+        return self.jobs.submit_task("normalization_check", lambda progress: self.check(progress, resolved_scope=scope))
+
+    def submit_auto(self, options=None):
+        if self.settings.demo or not self.settings.execution_enabled or not self.settings.web_execution_enabled:
+            raise ConfigError("Web実行を有効にした実ライブラリで利用してください。")
+        scope = self.targets.resolve(options)
+        check_id = self.store.create_job("normalization_check")
+
+        def run(progress):
+            self.store.update_job(check_id, status="running")
+            try:
+                def checked_progress(current, total):
+                    progress(current, total)
+                    self.store.update_job(check_id, current=current, total=total)
+                result = self.check(checked_progress, resolved_scope=scope)
+            except Exception as error:
+                self.store.update_job(check_id, status="failed", error=str(error) if isinstance(
+                    error, (ConfigError, StateConflict, KomgaError)) else "差分確認を完了できませんでした。")
+                raise
+            reason = ""
+            if result["counts"]["blocked"] or result["warnings"] or result["truncated"] or result["limit_reached"] or result["preparation_error"]:
+                reason = "要確認項目または確認上限があるため、自動実行せず差分を表示しています。"
+            elif not result["counts"]["ready"]:
+                reason = "ノーマライズが必要な追加・変更はありません。"
+            elif not result["operation_id"]:
+                reason = "実行できる計画を準備できませんでした。差分を確認してください。"
+            result.update(auto_execute=True, auto_stop_reason=reason)
+            self.store.update_job(check_id, status="succeeded", result=result)
+            if reason:
+                return {"check_id": check_id, "skipped": True, "reason": reason}
+            progress(0, result["counts"]["ready"])
+            return {**self.execute(check_id, result["digest"]), "check_id": check_id}
+
+        try:
+            action_id = self.jobs.submit_task("normalization_execute", run)
+        except Exception:
+            self.store.update_job(check_id, status="failed", error="処理を受け付けられませんでした。再実行してください。")
+            raise
+        return check_id, action_id
 
     def checked(self, job_id):
         job = self.store.job(job_id, include_result=True)
@@ -287,6 +347,7 @@ class NormalizationService:
         result = self.checked(job_id)
         if not result["operation_id"] or confirmation != result["digest"]:
             raise StateConflict("実行できる計画を確認してから実行してください。")
+        self.targets.verify(result.get("scope"))
         scanned = self.library.scan(refresh=True, reuse_metadata=True)
         current = {book.path: self._context(series) for series in scanned.series for book in series.books}
         if scanned.truncated or set(current) != set(result["inventory"]) or asdict(self.settings.layout) != result["layout"]:
@@ -320,6 +381,7 @@ class NormalizationService:
 
     def _remember(self, result, operation, normalized):
         values, removed = {}, []
+        tracked = set(result.get("tracked", result["inventory"]))
         contexts = {book.path: self._context(series) for series in normalized.series for book in series.books}
         pending = {item["source"] for item in result["items"] if item["state"] in {"ready", "blocked"}}
         with LibraryFilesystem(self.settings.library_root) as fs:
@@ -336,7 +398,7 @@ class NormalizationService:
             for path, original in result["inventory"].items():
                 if path in values or path in removed:
                     continue
-                if path not in pending:
+                if path not in pending and path in tracked:
                     try:
                         if fs.signature(path) == original["signature"]:
                             values[path] = original

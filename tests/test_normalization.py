@@ -9,11 +9,12 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import zipfile
 
 from manga_kit import create_app
-from manga_kit.config import ConfigError, Settings, load_settings
+from manga_kit.config import ConfigError, PathMapping, Settings, load_settings
+from manga_kit.normalization_scope import NormalizationTargets
 from manga_kit.state import StateConflict
 from archive_fixtures import stored_rar
 
@@ -63,8 +64,8 @@ class NormalizationTests(unittest.TestCase):
             time.sleep(0.01)
         self.fail('Normalization worker did not finish')
 
-    def check(self):
-        response = self.client.post('/api/normalization/checks', json={})
+    def check(self, options=None):
+        response = self.client.post('/api/normalization/checks', json=options or {})
         self.assertEqual(response.status_code, 202, response.json)
         job = self.wait_job(response.json['id'])
         self.assertEqual(job['status'], 'succeeded', job)
@@ -75,6 +76,166 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202, response.json)
         return self.wait_job(response.json['id'])
 
+    def automatic(self, options=None):
+        response = self.client.post('/api/normalization/checks', json={**(options or {}), 'auto_execute': True})
+        self.assertEqual(response.status_code, 202, response.json)
+        action = self.wait_job(response.json['action_id'])
+        return self.store.job(response.json['id'], include_result=True), action
+
+    def test_target_form_keeps_options_closed_and_automatic_execution_unchecked(self):
+        with (patch.object(self.app.extensions['library'], 'scan', side_effect=AssertionError('Implicit scan')),
+              patch('requests.Session.request', side_effect=AssertionError('Implicit network'))):
+            html = self.client.get('/normalize').get_data(as_text=True)
+        self.assertIn('value="local-ongoing"', html)
+        self.assertIn('name="subpath"', html)
+        self.assertIn('<details class="normalize-options" id="normalization-options">', html)
+        self.assertIn('id="normalization-auto">', html)
+        self.assertNotIn('id="normalization-auto" checked', html)
+        self.assertIn('差分を確認', html)
+
+    def test_scoped_execution_and_restore_leave_other_libraries_unprocessed(self):
+        other = self.settings.library_root / '完結' / '[別作者] 別作品'
+        other.mkdir(parents=True)
+        self.archive(other / '別作品 第1巻.zip')
+        (other / 'series.json').write_text(json.dumps({'title': '別作品', 'author': '別作者', 'reading': 'べつさくひん'}))
+        original = self.files()
+        calls = []
+        from manga_kit.normalization import inspect_archive
+        def inspected(fs, path, *args, **kwargs):
+            calls.append(path)
+            return inspect_archive(fs, path, *args, **kwargs)
+        with patch('manga_kit.normalization.inspect_archive', side_effect=inspected):
+            checked = self.check({'library': 'local-ongoing', 'subpath': self.folder.name})
+        self.assertEqual(checked['result']['counts']['scanned'], 2)
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all(path.startswith('連載中/') for path in calls))
+        self.assertEqual(self.action(checked)['status'], 'succeeded')
+        self.assertEqual(self.files()['完結/[別作者] 別作品/別作品 第1巻.zip'], original['完結/[別作者] 別作品/別作品 第1巻.zip'])
+        pending = self.check({'library': 'local-completed'})
+        self.assertEqual(pending['result']['counts']['added'], 1)
+        self.assertEqual(self.action(checked, 'restore')['status'], 'succeeded')
+        self.assertEqual(self.files(), original)
+
+    def test_scope_does_not_hide_collisions_with_another_series(self):
+        duplicate = self.folder.with_name('重複候補')
+        duplicate.mkdir()
+        self.archive(duplicate / '重複 第1巻.zip')
+        (duplicate / 'series.json').write_bytes((self.folder / 'series.json').read_bytes())
+        before = self.files()
+        checked, automatic = self.automatic({'library': 'local-ongoing', 'subpath': self.folder.name})
+        self.assertGreater(checked['result']['counts']['blocked'], 0)
+        self.assertTrue(automatic['result']['skipped'])
+        self.assertEqual(self.files(), before)
+
+    def test_invalid_targets_limits_and_symlinks_are_rejected_before_queueing(self):
+        escape = self.settings.library_root / '連載中' / '外へのリンク'
+        escape.symlink_to(self.root)
+        invalid = [{'library': 'missing'}, {'library': 'all', 'subpath': '連載中'},
+                   *({'library': 'local-ongoing', 'subpath': path} for path in (
+                       '../state', '/etc', 'C:/books', 'a/../b', 'a//b', 'a/./b', 'a\\b',
+                       '外へのリンク', self.folder.name + '/元の名前 第1巻.zip', 'missing', '\x00')),
+                   *({'limit': value} for value in (0, -1, True, 1.5, '2', self.settings.max_files + 1)),
+                   {'recheck': 'yes'}, {'auto_execute': 'yes'}]
+        for body in invalid:
+            with self.subTest(body=body):
+                self.assertEqual(self.client.post('/api/normalization/checks', json=body).status_code, 400)
+        self.assertEqual(self.store.jobs(), [])
+
+    def test_limit_prevents_partial_execution_and_displays_the_required_scope_count(self):
+        before = self.files()
+        checked, automatic = self.automatic({'limit': 1})
+        self.assertEqual(checked['status'], 'succeeded')
+        self.assertTrue(checked['result']['limit_reached'])
+        self.assertEqual(checked['result']['scope_count'], 2)
+        self.assertIsNone(checked['result']['operation_id'])
+        self.assertTrue(automatic['result']['skipped'])
+        self.assertEqual(self.files(), before)
+        html = self.client.get('/normalize?check=' + checked['id'] + '&action=' + automatic['id']).get_data(as_text=True)
+        self.assertIn('対象は2冊で、確認上限1冊', html)
+        self.assertNotIn('ノーマライズが必要な追加・変更はありません。', html)
+        self.assertIn('差分を確認', self.client.get('/jobs/' + automatic['id']).get_data(as_text=True))
+
+    def test_auto_execution_uses_the_checked_plan_and_can_be_restored(self):
+        before = self.files()
+        checked, automatic = self.automatic({'library': 'local-ongoing', 'subpath': self.folder.name})
+        self.assertEqual(checked['status'], 'succeeded')
+        self.assertEqual(automatic['status'], 'succeeded', automatic.get('error'))
+        self.assertFalse(checked['result']['auto_stop_reason'])
+        self.assertEqual(automatic['result']['check_id'], checked['id'])
+        self.assertTrue((self.folder / '架空作品 第01巻.cbz').exists())
+        self.assertNotEqual(self.files(), before)
+        self.assertEqual(self.action(checked, 'restore')['status'], 'succeeded')
+        self.assertEqual(self.files(), before)
+
+    def test_auto_execution_stops_for_broken_archives_and_for_no_changes(self):
+        path = self.folder / '元の名前 第1巻.zip'
+        source = path.read_bytes()
+        path.write_bytes(b'broken archive')
+        before = self.files()
+        checked, automatic = self.automatic()
+        self.assertGreater(checked['result']['counts']['blocked'], 0)
+        self.assertTrue(automatic['result']['skipped'])
+        self.assertEqual(self.files(), before)
+        path.write_bytes(source)
+        checked, automatic = self.automatic()
+        self.assertEqual(automatic['status'], 'succeeded', automatic.get('error'))
+        before = self.files()
+        checked, automatic = self.automatic()
+        self.assertTrue(automatic['result']['skipped'])
+        self.assertEqual(checked['result']['counts']['ready'], 0)
+        self.assertEqual(self.files(), before)
+
+    def test_auto_execution_requires_enabled_web_execution_and_same_origin(self):
+        for config in (replace(self.settings, execution_enabled=False, web_execution_enabled=False),
+                       replace(self.settings, web_execution_enabled=False), replace(self.settings, demo=True)):
+            app = create_app(settings=config)
+            self.addCleanup(app.extensions['jobs'].shutdown)
+            self.assertEqual(app.test_client().post('/api/normalization/checks', json={'auto_execute': True}).status_code, 400)
+        for kwargs in ({'base_url': 'http://evil.test'}, {'environ_overrides': {'REMOTE_ADDR': '192.0.2.1'}}):
+            self.assertEqual(self.client.post('/api/normalization/checks', json={'auto_execute': True}, **kwargs).status_code, 400)
+        self.assertEqual(self.client.post('/api/normalization/checks', json={'auto_execute': True},
+                         headers={'Origin': 'https://evil.test'}).status_code, 403)
+        self.assertEqual(self.store.jobs(), [])
+
+    def test_recheck_reads_verified_archives_without_rebuilding_canonical_books(self):
+        checked = self.check()
+        self.assertEqual(self.action(checked)['status'], 'succeeded')
+        from manga_kit.normalization import inspect_archive
+        with patch('manga_kit.normalization.inspect_archive', wraps=inspect_archive) as inspected:
+            again = self.check({'recheck': True})
+        self.assertEqual(inspected.call_count, 2)
+        self.assertEqual(again['result']['counts']['ready'], 0)
+        self.assertEqual(again['result']['counts']['unchanged'], 2)
+
+    def test_changed_scope_bindings_after_check_stop_execution(self):
+        checked = self.check({'library': 'local-ongoing'})
+        self.service.targets.settings = replace(self.settings, path_mappings=(PathMapping('/data', self.settings.library_root),))
+        before = self.files()
+        self.assertEqual(self.action(checked)['status'], 'failed')
+        self.assertEqual(self.files(), before)
+
+    def test_registered_komga_libraries_are_mapped_cached_and_revalidated(self):
+        client = Mock()
+        settings = replace(self.settings, komga_url='http://komga.test',
+                           path_mappings=(PathMapping('/data', self.settings.library_root),))
+        targets = NormalizationTargets(settings, self.store, client)
+        client.get.return_value = [{'id': 'ongoing', 'name': '登録した漫画', 'root': '/data/連載中'},
+                                   {'id': 'outside', 'name': '対象外', 'root': '/database/private'}]
+        libraries = targets.refresh()
+        self.assertTrue(libraries[0]['available'])
+        self.assertFalse(libraries[1]['available'])
+        self.assertIsNone(libraries[1]['path'])
+        self.assertEqual(targets.resolve()['roots'], ['連載中'])
+        selected = targets.resolve({'library': 'komga-ongoing', 'subpath': self.folder.name})
+        client.get.assert_called_once_with('/api/v1/libraries')
+        self.assertEqual(targets.libraries(), libraries)
+        with self.assertRaises(ConfigError):
+            targets.resolve({'library': 'komga-outside'})
+        client.get.return_value = [{'id': 'ongoing', 'name': '変更後', 'root': '/data'}]
+        targets.refresh()
+        with self.assertRaises(StateConflict):
+            targets.verify(selected)
+
     def test_check_does_not_change_books_and_displays_real_cbz_and_page_changes(self):
         before = self.files()
         job = self.check()
@@ -83,7 +244,7 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(job['result']['counts']['ready'], 2)
         self.assertTrue(all(row['target'].endswith('.cbz') and row['rebuild'] for row in job['result']['items']))
         html = self.client.get('/normalize?check=' + job['id']).get_data(as_text=True)
-        self.assertIn('確認した内容でノーマライズを実行', html)
+        self.assertIn('この内容で実行', html)
         self.assertIn('3ページを辞書順', html)
         self.assertEqual([(page['source'], page['target']) for page in job['result']['items'][0]['page_changes']],
                          [('page1.avif', '0001.avif'), ('page10.avif', '0002.avif'), ('page2.avif', '0003.avif')])

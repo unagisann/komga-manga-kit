@@ -41,7 +41,7 @@ def normalization_index():
     if identifier and (job is None or job["kind"] != "normalization_check"):
         raise NotFound()
     operation = service.operations.inspect(job["result"]["operation_id"]) if job and job["result"] and job["result"].get("operation_id") else None
-    action = store.job(request.args["action"]) if request.args.get("action") else None
+    action = store.job(request.args["action"], include_result=True) if request.args.get("action") else None
     if request.args.get("action") and (action is None or action["kind"] not in {"normalization_execute", "normalization_restore"}):
         raise NotFound()
     active = [entry for entry in store.jobs() if entry["kind"] in {"normalization_execute", "normalization_restore"}
@@ -49,7 +49,13 @@ def normalization_index():
     if active and action is None:
         action = active[0]
     items, paging = paginate(job["result"]["items"], size=20) if job and job["result"] else ([], None)
-    return render_template("normalize.html", check=job, operation=operation, action=action, busy=bool(active), items=items, pagination=paging)
+    scope = (job.get("result") or {}).get("scope") if job else None
+    return render_template("normalize.html", check=job, operation=operation, action=action, busy=bool(active),
+                           items=items, pagination=paging, target_libraries=service.targets.libraries(),
+                           target_scope=scope or {"library": request.args.get("library", "all"),
+                               "subpath": request.args.get("subpath", ""),
+                               "limit": request.args.get("limit", configuration().max_files),
+                               "recheck": request.args.get("recheck") == "true"})
 
 
 def require_normalization_execution():
@@ -74,9 +80,24 @@ def require_admin_access():
 
 @api.post("/normalization/checks")
 def normalization_check():
-    body_with_keys(set())
-    job_id = current_app.extensions["normalization"].submit_check()
+    body = body_with_keys({"library", "subpath", "limit", "recheck", "auto_execute"})
+    automatic = body.pop("auto_execute", False)
+    if type(automatic) is not bool:
+        raise ConfigError("そのまま実行は true / false で指定してください。")
+    service = current_app.extensions["normalization"]
+    if automatic:
+        require_normalization_execution()
+        job_id, action_id = service.submit_auto(body)
+        return jsonify(**current_app.extensions["state"].job(job_id), action_id=action_id), 202
+    job_id = service.submit_check(body)
     return jsonify(current_app.extensions["state"].job(job_id)), 202
+
+
+@api.post("/normalization/libraries/refresh")
+def normalization_libraries():
+    require_admin_access()
+    body_with_keys(set())
+    return jsonify(libraries=current_app.extensions["normalization"].targets.refresh())
 
 
 @api.post("/normalization/checks/<job_id>/<action>")

@@ -233,6 +233,61 @@ class KomgaIntegrationTests(unittest.TestCase):
             time.sleep(.5)
         self.fail(f'Komga did not import the {kind} sidecar artwork')
 
+    def test_scoped_auto_normalization_keeps_other_series_and_two_user_progress(self):
+        primary = self.wait_books()
+        self.wait_series_metadata(primary[0]['seriesId'])
+        other = self.root / '連載中' / '対象外の作品'
+        other.mkdir()
+        with zipfile.ZipFile(other / '対象外 第1巻.cbz', 'w') as archive:
+            archive.writestr('ComicInfo.xml', '<ComicInfo><Series>対象外の作品</Series><Number>1</Number></ComicInfo>')
+            archive.writestr('0001.png', _png())
+        before_files = self.hashes()
+        self.call(self.admin, 'POST', '/api/v1/libraries/' + self.native_library['id'] + '/scan')
+        self.wait_books(count=3)
+        self.call(self.readers[0], 'PATCH', '/api/v1/books/' + primary[0]['id'] + '/read-progress', {'page': 2})
+        self.call(self.readers[1], 'PATCH', '/api/v1/books/' + primary[1]['id'] + '/read-progress', {'completed': True})
+        before = self.progress(primary)
+        app = create_app(settings=replace(self.service.settings, web_execution_enabled=True))
+        self.addCleanup(app.extensions['jobs'].shutdown)
+        client, store = app.test_client(), app.extensions['state']
+        self.assertEqual(client.post('/api/normalization/libraries/refresh', json={}).status_code, 200)
+        response = client.post('/api/normalization/checks', json={
+            'library': 'komga-' + self.native_library['id'], 'subpath': '連載中/検証用作品', 'auto_execute': True})
+        self.assertEqual(response.status_code, 202, response.json)
+        def completed(identifier):
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                job = store.job(identifier, include_result=True)
+                if job['status'] not in {'queued', 'running'}:
+                    self.assertEqual(job['status'], 'succeeded', job)
+                    return job
+                time.sleep(.1)
+            self.fail('Scoped normalization did not finish')
+        action = completed(response.json['action_id'])
+        self.assertFalse(action['result'].get('skipped'), action)
+        checked = completed(response.json['id'])
+        self.assertEqual(checked['result']['counts']['scanned'], 2)
+        all_books = self.wait_books(count=3)
+        selected = sorted([book for book in all_books if '対象外の作品' not in book['url']],
+                          key=lambda book: book['metadata']['numberSort'])
+        self.assertEqual(len(selected), 2)
+        self.assertEqual(self.progress(selected), before)
+        operation = app.extensions['normalization'].operations.inspect(checked['result']['operation_id'])
+        for book in selected:
+            relative = app.extensions['normalization'].operations.guard.relative(book['url'])
+            self.assertEqual(book['id'], operation['managed_native']['books'][relative]['id'])
+        relative = '連載中/対象外の作品/対象外 第1巻.cbz'
+        self.assertEqual(self.hashes()[relative], before_files[relative])
+        self.call(self.readers[0], 'PATCH', '/api/v1/books/' + selected[0]['id'] + '/read-progress', {'page': 3})
+        latest = self.progress(selected)
+        restored = client.post('/api/normalization/checks/' + checked['id'] + '/restore', json={'confirm': checked['result']['digest']})
+        self.assertEqual(restored.status_code, 202, restored.json)
+        completed(restored.json['id'])
+        self.assertEqual(self.hashes(), before_files)
+        restored_books = sorted([book for book in self.wait_books(count=3) if '対象外の作品' not in book['url']],
+                                key=lambda book: book['metadata']['numberSort'])
+        self.assertEqual(self.progress(restored_books), latest)
+
     def test_nested_series_and_local_artwork_move_with_parent_and_restore(self):
         nested = self.folder / '外伝'
         nested.mkdir()
