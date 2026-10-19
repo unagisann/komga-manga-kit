@@ -89,7 +89,9 @@
         if (!response.ok) throw new Error('進捗を取得できませんでした。処理履歴から確認できます。');
         const job = await response.json();
         if (!['queued', 'running'].includes(job.status)) { location.reload(); return; }
-        if ($(message)) $(message).textContent = `処理中 · ${job.current}${job.total === null ? '' : ' / ' + job.total}冊`;
+        if ($(message)) $(message).textContent = job.status === 'queued'
+          ? `順番待ち${job.queue_position > 1 ? ' · 前に'+(job.queue_position-1)+'件' : ''}`
+          : `処理中 · ${job.current}${job.total === null ? '' : ' / ' + job.total}冊`;
         setTimeout(poll, 1000);
       } catch (reason) { error(reason.message); }
     };

@@ -270,7 +270,7 @@ def refresh_rankings():
                 errors.append({"year": year, "category": category, "error": str(error)})
             progress(index + 1, len(targets))
         return {"items": count, "errors": errors, "source": "feed:ranking"}
-    return job_response(service("jobs").submit_task("source_refresh", update))
+    return job_response(service("jobs").submit_task("source_refresh", update, key=["ranking-all", season()["year"]]))
 
 
 @tools.post("/api/tools/new-volumes/check")

@@ -3,6 +3,8 @@ from dataclasses import replace
 import hashlib
 from pathlib import Path
 import tempfile
+from threading import Event
+import time
 import unittest
 from unittest.mock import Mock, patch
 from xml.etree.ElementTree import fromstring
@@ -38,6 +40,41 @@ class ToolFixture:
 
 
 class ToolOperationsTests(ToolFixture, unittest.TestCase):
+    def test_page_preview_waits_and_deduplicates_without_changing_the_archive(self):
+        editor = self.app.extensions['page_editor']
+        review = editor.review(self.book_id)
+        entered, release = Event(), Event()
+        def blocking(progress):
+            entered.set()
+            if not release.wait(10):
+                raise RuntimeError('fixture timed out')
+            return {}
+        self.app.extensions['jobs'].submit_task('fixture', blocking)
+        self.assertTrue(entered.wait(3))
+        client = self.app.test_client()
+        try:
+            body = {'selected_pages': list(reversed(review['pages'])), 'fingerprint': review['fingerprint']}
+            first = client.post(f'/api/tools/pages/{self.book_id}/preview/jobs', json=body)
+            second = client.post(f'/api/tools/pages/{self.book_id}/preview/jobs', json=body)
+            self.assertEqual((first.status_code, second.status_code), (202, 202))
+            self.assertEqual(first.json['id'], second.json['id'])
+            self.assertEqual(self.store.job(first.json['id'])['status'], 'queued')
+            self.assertEqual(self.book.read_bytes(), self.original)
+            self.assertEqual(self.store.cached_prefix('pages:operation:'), {})
+        finally:
+            release.set()
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            job = self.store.job(first.json['id'], include_result=True)
+            if job['status'] not in {'queued', 'running'}:
+                break
+            time.sleep(.01)
+        self.assertEqual(job['status'], 'succeeded', job)
+        self.assertEqual(self.book.read_bytes(), self.original)
+        self.assertEqual(len(self.store.cached_prefix('pages:operation:')), 1)
+        html = client.get('/jobs/'+job['id']).get_data(as_text=True)
+        self.assertIn(f'/pages/{self.book_id}?plan={job["result"]["plan"]["id"]}', html)
+
     def test_book_thumbnail_prefers_komga_and_lets_the_browser_keep_covers(self):
         from manga_kit.komga import KomgaError
         client = self.app.test_client()

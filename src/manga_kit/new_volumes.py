@@ -72,7 +72,8 @@ class NewVolumeService:
                     or set(series_ids) - {row["id"] for row in rows}):
                 raise ConfigError("新刊チェックの対象作品を確認してください。")
             rows = [row for row in rows if row["id"] in series_ids]
-        return self.jobs.submit_task("new_volume_check", lambda progress: self.check(rows, force=force, new_only=new_only, progress=progress))
+        return self.jobs.submit_task("new_volume_check", lambda progress: self.check(rows, force=force, new_only=new_only, progress=progress),
+                                     key=[sorted(row["id"] for row in rows), force, new_only])
 
     def search(self, provider, title):
         catalog = self.providers[provider]

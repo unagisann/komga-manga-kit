@@ -7,17 +7,33 @@
     if (!response.ok) throw new Error(data.error || '処理を受け付けられませんでした。');
     return data;
   };
+  const showJob = job => {
+    const message = job.status === 'queued'
+      ? `順番待ち${job.queue_position > 1 ? ' · 前に'+(job.queue_position-1)+'件' : ''}`
+      : `処理中 · ${job.current}${job.total === null ? '' : ' / '+job.total}`;
+    show(message+'。この画面を離れても処理は続きます。');
+    if (status) {
+      const link = document.createElement('a');
+      link.href = '/jobs/'+encodeURIComponent(job.id); link.textContent = '処理の詳細';
+      status.append(' ', link);
+    }
+  };
   const follow = async (job,reviewUrl) => {
-    show('処理を受け付けました。この画面を離れても処理は続きます。');
+    showJob(job);
     while (['queued','running'].includes(job.status)) {
       await new Promise(resolve => setTimeout(resolve,1000));
       const response = await fetch(`/api/jobs/${encodeURIComponent(job.id)}`);
       if (!response.ok) throw new Error('進捗を確認できませんでした。管理の処理履歴から確認できます。');
       job = await response.json();
-      show(`処理中 · ${job.current}${job.total === null ? '' : ' / '+job.total}`);
+      if (['queued','running'].includes(job.status)) showJob(job);
     }
     if (job.status !== 'succeeded') throw new Error(job.error || '処理を完了できませんでした。');
-    if (reviewUrl && job.result?.plan) { location.href = reviewUrl+'?plan='+encodeURIComponent(job.result.plan.id); return; }
+    if (reviewUrl) {
+      const response = await fetch(`/api/jobs/${encodeURIComponent(job.id)}/result`);
+      if (!response.ok) throw new Error('結果を確認できませんでした。処理の詳細から確認できます。');
+      const result = await response.json();
+      if (result.plan) { location.href = reviewUrl+'?plan='+encodeURIComponent(result.plan.id); return; }
+    }
     location.reload();
   };
   document.querySelectorAll('[data-tool-action]').forEach(button => button.addEventListener('click', async () => {

@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from threading import Event
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -81,6 +82,58 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202, response.json)
         action = self.wait_job(response.json['action_id'])
         return self.store.job(response.json['id'], include_result=True), action
+
+    def test_duplicate_automatic_requests_share_check_and_execution_then_restore_originals(self):
+        before = self.files()
+        entered, release = Event(), Event()
+        def blocking(progress):
+            entered.set()
+            if not release.wait(10):
+                raise RuntimeError('fixture timed out')
+            return {}
+        self.app.extensions['jobs'].submit_task('fixture', blocking)
+        self.assertTrue(entered.wait(3))
+        try:
+            first = self.client.post('/api/normalization/checks', json={'auto_execute': True})
+            second = self.client.post('/api/normalization/checks', json={'auto_execute': True})
+            self.assertEqual((first.status_code, second.status_code), (202, 202))
+            self.assertEqual((first.json['id'], first.json['action_id']), (second.json['id'], second.json['action_id']))
+            self.assertEqual(len(self.store.jobs()), 3)
+            self.assertEqual(self.files(), before)
+        finally:
+            release.set()
+        action = self.wait_job(first.json['action_id'])
+        self.assertEqual(action['status'], 'succeeded', action)
+        checked = self.store.job(first.json['id'], include_result=True)
+        self.assertEqual(checked['status'], 'succeeded')
+        self.assertEqual(self.action(checked, 'restore')['status'], 'succeeded')
+        self.assertEqual(self.files(), before)
+
+    def test_duplicate_confirmed_execution_runs_once_while_other_work_waits(self):
+        before, checked = self.files(), self.check()
+        entered, release = Event(), Event()
+        original = self.service.operations.execute
+        def executing(*args, **kwargs):
+            entered.set()
+            if not release.wait(10):
+                raise RuntimeError('fixture timed out')
+            return original(*args, **kwargs)
+        path = f'/api/normalization/checks/{checked["id"]}/execute'
+        body = {'confirm': checked['result']['digest']}
+        with patch.object(self.service.operations, 'execute', side_effect=executing) as execution:
+            try:
+                first = self.client.post(path, json=body)
+                self.assertTrue(entered.wait(3))
+                second = self.client.post(path, json=body)
+                self.assertEqual((first.status_code, second.status_code), (202, 202))
+                self.assertEqual(first.json['id'], second.json['id'])
+                self.assertEqual(self.files(), before)
+            finally:
+                release.set()
+            self.assertEqual(self.wait_job(first.json['id'])['status'], 'succeeded')
+            self.assertEqual(execution.call_count, 1)
+        self.assertEqual(self.action(checked, 'restore')['status'], 'succeeded')
+        self.assertEqual(self.files(), before)
 
     def test_target_form_keeps_options_closed_and_automatic_execution_unchecked(self):
         with (patch.object(self.app.extensions['library'], 'scan', side_effect=AssertionError('Implicit scan')),

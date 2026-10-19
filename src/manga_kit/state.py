@@ -65,6 +65,12 @@ class StateStore:
                             created TEXT NOT NULL, updated TEXT NOT NULL, owner TEXT NOT NULL,
                             result TEXT, error TEXT);
                         CREATE INDEX IF NOT EXISTS jobs_by_library ON jobs(namespace, created);
+                        CREATE TABLE IF NOT EXISTS job_queue (
+                            position INTEGER PRIMARY KEY AUTOINCREMENT,
+                            namespace TEXT NOT NULL, task_key TEXT NOT NULL,
+                            job_id TEXT NOT NULL UNIQUE, child_id TEXT);
+                        CREATE INDEX IF NOT EXISTS queue_by_library ON job_queue(namespace, task_key);
+                        CREATE UNIQUE INDEX IF NOT EXISTS queue_child ON job_queue(child_id);
                         CREATE TABLE IF NOT EXISTS edits (
                             namespace TEXT NOT NULL, series_id TEXT NOT NULL, fields TEXT NOT NULL,
                             revision INTEGER NOT NULL, updated TEXT NOT NULL,
@@ -277,13 +283,57 @@ class StateStore:
                  "detail": json.loads(row["detail"])} for row in rows]
 
     def create_job(self, kind):
-        job_id, now = uuid4().hex, timestamp()
         with self.connection() as conn:
-            conn.execute("INSERT INTO jobs(id,namespace,kind,status,created,updated,owner) VALUES(?,?,?,?,?,?,?)",
-                         (job_id, self.namespace, kind, "queued", now, now,
-                          json.dumps({"pid": os.getpid(), "start": process_start(os.getpid())})))
-            self._event(conn, "job_created", job_id, {"kind": kind})
+            job_id = self._create_job(conn, kind)
         return job_id
+
+    def _create_job(self, conn, kind):
+        job_id, now = uuid4().hex, timestamp()
+        conn.execute("INSERT INTO jobs(id,namespace,kind,status,created,updated,owner) VALUES(?,?,?,?,?,?,?)",
+                     (job_id, self.namespace, kind, "queued", now, now,
+                      json.dumps({"pid": os.getpid(), "start": process_start(os.getpid())})))
+        self._event(conn, "job_created", job_id, {"kind": kind})
+        return job_id
+
+    def enqueue_job(self, kind, task_key, *, child_kind=None):
+        """Reserve one FIFO slot atomically, including duplicate/capacity checks."""
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            active = conn.execute("SELECT q.* FROM job_queue q JOIN jobs j ON j.id=q.job_id "
+                                  "WHERE q.namespace=? AND j.status IN ('queued','running') ORDER BY q.position",
+                                  (self.namespace,)).fetchall()
+            duplicate = next((row for row in active if row["task_key"] == task_key), None)
+            if duplicate:
+                return duplicate["job_id"], duplicate["child_id"], False
+            if len(active) >= 20:
+                raise ConfigError("処理待ちが20件に達しています。完了後に再実行してください。")
+            job_id = self._create_job(conn, kind)
+            child_id = self._create_job(conn, child_kind) if child_kind else None
+            conn.execute("INSERT INTO job_queue(namespace,task_key,job_id,child_id) VALUES(?,?,?,?)",
+                         (self.namespace, task_key, job_id, child_id))
+        return job_id, child_id, True
+
+    def start_queued_job(self, job_id):
+        """Only the first active queue entry may start, across local processes."""
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            job = conn.execute("SELECT status FROM jobs WHERE namespace=? AND id=?",
+                               (self.namespace, job_id)).fetchone()
+            if job is None or job["status"] != "queued":
+                return job["status"] if job else "interrupted"
+            first = conn.execute("SELECT j.id FROM job_queue q JOIN jobs j ON j.id=q.job_id "
+                                 "WHERE q.namespace=? AND j.status IN ('queued','running') ORDER BY q.position LIMIT 1",
+                                 (self.namespace,)).fetchone()
+            if first and first["id"] == job_id:
+                conn.execute("UPDATE jobs SET status='running',updated=? WHERE id=?", (timestamp(), job_id))
+                return "started"
+        return "queued"
+
+    def queued_child(self, job_id):
+        with self.connection() as conn:
+            row = conn.execute("SELECT child_id FROM job_queue WHERE namespace=? AND job_id=?",
+                               (self.namespace, job_id)).fetchone()
+        return row["child_id"] if row else None
 
     def update_job(self, job_id, *, status=None, current=None, total=None, result=None, error=None):
         values = {"updated": timestamp()}
@@ -301,20 +351,27 @@ class StateStore:
     @staticmethod
     def _job(row, include_result=False):
         job = {key: row[key] for key in ("id", "kind", "status", "current", "total", "created", "updated", "error")}
+        job["queue_position"] = row["queue_position"] if "queue_position" in row.keys() else None
         if include_result:
             job["result"] = json.loads(row["result"]) if row["result"] else None
         return job
 
     def job(self, job_id, include_result=False):
         with self.connection() as conn:
-            row = conn.execute("SELECT * FROM jobs WHERE namespace=? AND id=?", (self.namespace, job_id)).fetchone()
+            row = conn.execute(self._queued_jobs + " WHERE j.namespace=? AND j.id=?", (self.namespace, job_id)).fetchone()
         return self._job(row, include_result) if row else None
 
     def jobs(self, limit=50, offset=0):
         with self.connection() as conn:
-            rows = conn.execute("SELECT * FROM jobs WHERE namespace=? ORDER BY created DESC,id DESC LIMIT ? OFFSET ?",
+            rows = conn.execute(self._queued_jobs + " WHERE j.namespace=? ORDER BY j.created DESC,j.id DESC LIMIT ? OFFSET ?",
                                 (self.namespace, limit, offset)).fetchall()
         return [self._job(row) for row in rows]
+
+    _queued_jobs = """SELECT j.*, CASE WHEN j.status='queued' AND q.position IS NOT NULL THEN
+        (SELECT COUNT(*) FROM job_queue preceding JOIN jobs active ON active.id=preceding.job_id
+         WHERE preceding.namespace=j.namespace AND preceding.position<=q.position
+         AND active.status IN ('queued','running')) ELSE NULL END AS queue_position
+        FROM jobs j LEFT JOIN job_queue q ON q.job_id=j.id OR q.child_id=j.id"""
 
     def latest_preview(self):
         with self.connection() as conn:

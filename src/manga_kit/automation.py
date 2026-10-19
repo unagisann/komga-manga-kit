@@ -76,8 +76,12 @@ class Automation:
                 raise ConfigError("この処理は完了しています。")
         else:
             run = {"id": uuid4().hex, "config": config, "created": timestamp(), "status": "queued", "steps": {}, "after_import": after_import}
-            self.store.cache("automation:run:" + run["id"], run)
-        return self.jobs.submit_task("automation", lambda progress: self.run(run["id"], progress))
+        def execute(progress):
+            if not identifier:
+                self.store.cache("automation:run:" + run["id"], run)
+            return self.run(run["id"], progress)
+        return self.jobs.submit_task("automation", execute,
+                                    key={"resume": identifier} if identifier else {"config": config, "after_import": after_import})
 
     def enrich(self, provider, auto_apply):
         metadata = self.services["metadata"]

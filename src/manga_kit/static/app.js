@@ -28,8 +28,11 @@
     return result;
   };
   const jobStates = { queued: '待機中', running: '処理中', succeeded: '完了', failed: '失敗', interrupted: '中断' };
+  const jobState = job => job.status === 'queued' ? `順番待ち${job.queue_position > 1 ? '（前に'+(job.queue_position-1)+'件）' : ''}` : jobStates[job.status];
+  const toolJobKinds = { scan_refresh: '蔵書の表示更新', pages_preview: 'ページ修正の差分確認', shelf_preview: 'スマート本棚の差分確認', automation: '自動更新・取り込み後の処理', cover_screening: '表紙の確認', ai_generate: 'AIの提案取得', shelf_execute: 'スマート本棚の同期', shelf_restore: 'スマート本棚の復元', pages_execute: '表紙・ページの修正', pages_restore: 'ページ修正の復元', maintenance_preview: '管理操作の差分確認', maintenance_execute: '管理操作の実行', maintenance_restore: '管理操作の復元', source_refresh: '情報源の更新', inventory_refresh: '蔵書情報の更新', new_volume_check: '新刊チェック' };
   const jobKinds = { normalization_check: '追加・変更分の確認', normalize: 'ノーマライズ', normalization_execute: 'ノーマライズの実行', normalization_restore: 'ノーマライズの復元', enrichment: '自動補完の候補取得', scan: '蔵書スキャン', preview: '整理プレビュー', organize: '整理の実行', restore: '整理の復元', conversion: 'CBZ生成', conversion_restore: 'CBZ生成の取り消し', komga_metadata: 'Komga作品情報の反映', komga_metadata_restore: 'Komga作品情報の復元', komga_authors: 'Komga著者情報の反映', komga_authors_restore: 'Komga著者情報の復元' };
   const statusLabels = { ongoing: '連載中', completed: '完結', unknown: '未分類' };
+  Object.assign(jobKinds, toolJobKinds);
   const waitJob = async (job, update, { result = true } = {}) => {
     while (['queued', 'running'].includes(job.status)) {
       update?.(job);
@@ -183,7 +186,7 @@
         data.jobs.forEach((job) => {
           const row = node('tr'), result = node('td'), link = node('a', '', '詳細を見る');
           link.href = `/jobs/${encodeURIComponent(job.id)}`; result.append(link);
-          row.append(node('td', '', jobKinds[job.kind] || job.kind), node('td', '', jobStates[job.status]), node('td', '', `${job.current}${job.total === null ? '' : ` / ${job.total}`}`), node('td', '', new Date(job.created).toLocaleString('ja-JP')), result);
+          row.append(node('td', '', jobKinds[job.kind] || job.kind), node('td', '', jobState(job)), node('td', '', `${job.current}${job.total === null ? '' : ` / ${job.total}`}`), node('td', '', new Date(job.created).toLocaleString('ja-JP')), result);
           rows.append(row);
         });
         if (!data.jobs.length) { const row = node('tr'), cell = node('td', '', 'まだ処理の記録はありません。'); cell.colSpan = 5; row.append(cell); rows.append(row); }
@@ -213,7 +216,7 @@
       try {
         const job = await get(`/api/jobs/${encodeURIComponent(detail.dataset.jobId)}`);
         if (!['queued', 'running'].includes(job.status)) location.reload();
-        else { $('#job-status').textContent = `${jobStates[job.status]} · ${job.current}${detail.dataset.jobKind === 'enrichment' ? '作品' : '冊'}を確認`; setTimeout(poll, 1500); }
+        else { $('#job-status').textContent = job.status === 'queued' ? jobState(job) : `${jobState(job)} · ${job.current}${detail.dataset.jobKind === 'enrichment' ? '作品' : '冊'}を確認`; setTimeout(poll, 1500); }
       } catch (error) { $('#job-status').textContent = error.message; }
     }; poll();
   }

@@ -1,3 +1,7 @@
+{% macro job_state(job, labels) -%}
+{% if job.status == 'queued' %}順番待ち{% if job.queue_position and job.queue_position > 1 %}（前に{{ job.queue_position - 1 }}件）{% endif %}{% else %}{{ labels.get(job.status, job.status) }}{% endif %}
+{%- endmacro %}
+
 {% macro icon(name, size=20) -%}
 {% set paths = {
  'book': ['M4 4h6a2 2 0 0 1 2 2v15a3 3 0 0 0-3-3H4z', 'M20 4h-6a2 2 0 0 0-2 2v15a3 3 0 0 1 3-3h5z'],

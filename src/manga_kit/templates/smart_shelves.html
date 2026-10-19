@@ -2,7 +2,7 @@
 {% block title %}スマート本棚{% endblock %}
 {% block scripts %}<script src="{{ asset_url('tools.js') }}" defer></script>{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">SMART SHELVES</p><h1>スマート本棚</h1><p>所持作品をKomgaのコレクション・読書リストに同期します。</p></div><button class="button primary" data-tool-action="/api/tools/shelves/preview" data-review-url="/smart-shelves">変更を確認</button></div>
+<div class="page-heading"><div><p class="eyebrow">SMART SHELVES</p><h1>スマート本棚</h1><p>所持作品をKomgaのコレクション・読書リストに同期します。</p></div><button class="button primary" data-tool-action="/api/tools/shelves/preview/jobs" data-review-url="/smart-shelves">変更を確認</button></div>
 <p class="notice">Manga Kitで作成した本棚を対象にします。情報が未取得の本棚は前回の内容を保持します。</p>
 {% for target in targets %}<section class="panel section"><h2>{{ target.name }}</h2><p>{{ target.ids|length }}{{ '冊' if target.kind == 'readlists' else '作品' }}{% if not target.available %} · 情報を更新してから同期できます{% endif %}</p><p>{{ target.titles|join(' / ') or '対象の作品がありません。' }}</p></section>{% endfor %}
 {% if operation %}<section class="panel section"><h2>確認した変更内容</h2><p>状態: {{ {'planned':'実行待ち','running':'同期中・再開可能','completed':'同期済み','restoring':'復元中・再開可能','restored':'復元済み'}.get(operation.status,operation.status) }}</p>{% for target in operation.plan.targets %}<p>{{ target.name }}: {{ '取得結果がないため保持' if target.skip else ((target.before.seriesIds or target.before.bookIds or [])|length|string ~ ' → ' ~ target.ids|length|string) if target.before else '新規作成' }}</p>{% endfor %}

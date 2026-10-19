@@ -297,15 +297,13 @@ class NormalizationService:
 
     def submit_check(self, options=None):
         scope = self.targets.resolve(options)
-        return self.jobs.submit_task("normalization_check", lambda progress: self.check(progress, resolved_scope=scope))
+        return self.jobs.submit_task("normalization_check", lambda progress: self.check(progress, resolved_scope=scope), key=scope)
 
     def submit_auto(self, options=None):
         if self.settings.demo or not self.settings.execution_enabled or not self.settings.web_execution_enabled:
             raise ConfigError("Web実行を有効にした実ライブラリで利用してください。")
         scope = self.targets.resolve(options)
-        check_id = self.store.create_job("normalization_check")
-
-        def run(progress):
+        def run(progress, check_id):
             self.store.update_job(check_id, status="running")
             try:
                 def checked_progress(current, total):
@@ -330,12 +328,8 @@ class NormalizationService:
             progress(0, result["counts"]["ready"])
             return {**self.execute(check_id, result["digest"]), "check_id": check_id}
 
-        try:
-            action_id = self.jobs.submit_task("normalization_execute", run)
-        except Exception:
-            self.store.update_job(check_id, status="failed", error="処理を受け付けられませんでした。再実行してください。")
-            raise
-        return check_id, action_id
+        action_id = self.jobs.submit_task("normalization_execute", run, key={"auto": scope}, child_kind="normalization_check")
+        return self.store.queued_child(action_id), action_id
 
     def checked(self, job_id):
         job = self.store.job(job_id, include_result=True)
@@ -377,7 +371,7 @@ class NormalizationService:
             raise StateConflict("この操作は既に処理済みか、復元が必要な状態です。")
         action = self.restore if restore else self.execute
         return self.jobs.submit_task("normalization_restore" if restore else "normalization_execute",
-                                     lambda progress: action(job_id, confirmation))
+                                     lambda progress: action(job_id, confirmation), key=[result["operation_id"], confirmation])
 
     def _remember(self, result, operation, normalized):
         values, removed = {}, []

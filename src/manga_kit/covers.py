@@ -126,7 +126,7 @@ class CoverScreening:
             import PIL  # noqa: F401
         except ImportError:
             raise ConfigError("表紙の確認には Pillow が必要です。依存パッケージを入れ直してください。") from None
-        return self.jobs.submit_task("cover_screening", lambda progress: self.run(progress, force=force))
+        return self.jobs.submit_task("cover_screening", lambda progress: self.run(progress, force=force), key=force)
 
     def books(self):
         return [book for row in self.inventory.cached()["series"] for book in row["books"] if book.get("path")]

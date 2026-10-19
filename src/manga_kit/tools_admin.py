@@ -39,8 +39,13 @@ def shelves():
 
 
 @maintenance.post("/api/tools/shelves/preview")
+@maintenance.post("/api/tools/shelves/preview/jobs")
 def shelves_preview():
     require_admin_access(); body_with_keys(set())
+    current_service = current_app.extensions["smart_shelves"]
+    if request.path.endswith("/jobs"):
+        job = current_app.extensions["jobs"].submit_task("shelf_preview", lambda progress: current_service.prepare())
+        return jsonify(current_app.extensions["state"].job(job)), 202
     return jsonify(current_app.extensions["smart_shelves"].prepare())
 
 
@@ -53,7 +58,7 @@ def shelves_action(identifier, action):
     body = body_with_keys({"confirm"}, {"confirm"})
     service = current_app.extensions["smart_shelves"]
     job = current_app.extensions["jobs"].submit_task("shelf_" + action,
-        lambda progress: service.execute(identifier, body["confirm"], restore=action == "restore"))
+        lambda progress: service.execute(identifier, body["confirm"], restore=action == "restore"), key=[identifier, body["confirm"]])
     return jsonify(current_app.extensions["state"].job(job)), 202
 
 
@@ -79,7 +84,7 @@ def ai_generate():
     require_admin_access()
     body = body_with_keys({"series_id", "fields", "web_search"}, {"series_id", "fields"})
     service = current_app.extensions["ai_assist"]
-    job = current_app.extensions["jobs"].submit_task("ai_generate", lambda progress: service.generate(**body))
+    job = current_app.extensions["jobs"].submit_task("ai_generate", lambda progress: service.generate(**body), key=body)
     return jsonify(current_app.extensions["state"].job(job)), 202
 
 
@@ -172,10 +177,16 @@ def edit_pages(book_id):
 
 
 @maintenance.post("/api/tools/pages/<book_id>/preview")
+@maintenance.post("/api/tools/pages/<book_id>/preview/jobs")
 def pages_preview(book_id):
     require_admin_access()
     request.max_content_length = 128 * 1024
     body = body_with_keys({"selected_pages", "fingerprint"}, {"selected_pages", "fingerprint"})
+    if request.path.endswith("/jobs"):
+        editor = current_app.extensions["page_editor"]
+        job = current_app.extensions["jobs"].submit_task("pages_preview",
+            lambda progress: {**editor.prepare_book(book_id, **body), "book_id": book_id}, key=[book_id, body])
+        return jsonify(current_app.extensions["state"].job(job)), 202
     return jsonify(current_app.extensions["page_editor"].prepare_book(book_id, **body))
 
 
@@ -204,7 +215,7 @@ def pages_action(identifier, action):
         result = getattr(editor, action)(identifier, body["confirm"])
         inventory.refresh()
         return {"operation_id": identifier, "files": result["moved_count"], "status": result["status"]}
-    job = current_app.extensions["jobs"].submit_task("pages_" + action, run)
+    job = current_app.extensions["jobs"].submit_task("pages_" + action, run, key=[identifier, body["confirm"]])
     return jsonify(current_app.extensions["state"].job(job)), 202
 
 
@@ -291,7 +302,7 @@ def maintenance_preview(kind):
     require_admin_access()
     body = body_with_keys({"mode", "series_ids", "fields", "overwrite", "replace_locked", "replace_lists"})
     service = current_app.extensions["maintenance_ops"]
-    job = current_app.extensions["jobs"].submit_task("maintenance_preview", lambda progress: service.prepare(kind, **body))
+    job = current_app.extensions["jobs"].submit_task("maintenance_preview", lambda progress: service.prepare(kind, **body), key=[kind, body])
     return jsonify(current_app.extensions["state"].job(job)), 202
 
 
@@ -305,5 +316,5 @@ def maintenance_action(identifier, action):
     body = body_with_keys({"confirm"}, {"confirm"})
     service = current_app.extensions["maintenance_ops"]
     job = current_app.extensions["jobs"].submit_task("maintenance_" + action,
-        lambda progress: service.execute(identifier, body["confirm"], restore=action == "restore"))
+        lambda progress: service.execute(identifier, body["confirm"], restore=action == "restore"), key=[identifier, body["confirm"]])
     return jsonify(current_app.extensions["state"].job(job)), 202

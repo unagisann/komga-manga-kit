@@ -78,7 +78,8 @@ class AutoEnrichmentService:
         actual = {series.id for series in self.metadata.library.scan().series}
         if set(series_ids) - actual:
             raise ConfigError("選んだ作品が見つかりません。作品一覧を更新してください。")
-        return self.jobs.submit_task("enrichment", lambda progress: self.collect(series_ids, provider, progress, link_only=link_only))
+        return self.jobs.submit_task("enrichment", lambda progress: self.collect(series_ids, provider, progress, link_only=link_only),
+                                     key=[provider, sorted(series_ids), link_only])
 
     def _pace(self, provider):
         with self.store.connection() as connection:

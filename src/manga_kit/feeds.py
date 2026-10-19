@@ -205,7 +205,8 @@ class FeedsService:
 
     def submit(self, kind, year=None, category=None):
         self.key(kind, year, category)
-        return self.jobs.submit_task("source_refresh", lambda progress: self.refresh(kind, year, category, progress))
+        return self.jobs.submit_task("source_refresh", lambda progress: self.refresh(kind, year, category, progress),
+                                     key=self.key(kind, year, category))
 
     def submit_discovery(self):
         if not self.settings.demo and not self.settings.tools.discovery_enabled:
@@ -215,7 +216,7 @@ class FeedsService:
             self.inventory.refresh()
             return self.refresh("curated", progress=progress)
 
-        return self.jobs.submit_task("source_refresh", update)
+        return self.jobs.submit_task("source_refresh", update, key="discovery-all")
 
     def refresh(self, kind, year=None, category=None, progress=lambda *_: None):
         key = self.key(kind, year, category)
