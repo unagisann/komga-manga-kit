@@ -76,21 +76,6 @@
     } catch (error) { announce(error.message); button.textContent = '読み直す'; button.disabled = false; }
   });
 
-  $('#test-komga')?.addEventListener('click', async (event) => {
-    const button = event.currentTarget, result = $('#komga-result'), libraries = $('#komga-libraries');
-    button.disabled = true;
-    result.hidden = false;
-    result.className = 'connection-result';
-    result.textContent = 'Komgaへ接続しています…';
-    libraries.replaceChildren();
-    try {
-      const data = await post('/api/komga/test');
-      result.textContent = `接続できました。${data.library_count}件のライブラリを確認しました。`;
-      data.libraries.forEach((library) => libraries.append(node('li', '', library.name || '名称未設定')));
-    } catch (error) { result.classList.add('error'); result.textContent = error.message; }
-    finally { button.disabled = false; }
-  });
-
   $('#layout-preset')?.addEventListener('change', (event) => {
     const form = $('#layout-form');
     const patterns = { kana: '{status}/{kana_row}/{series}', status: '{status}/{series}', author: '{author}/{series}', flat: '{series}' };

@@ -70,7 +70,7 @@ class ManagementUITests(unittest.TestCase):
         history = self.client.get('/jobs').get_data(as_text=True)
         self.assertNotIn('data-job-kind', history)
         settings = self.client.get('/settings').get_data(as_text=True)
-        for marker in ('id="menu-settings"', 'id="tools-settings"', 'id="tools-credentials"', 'id="test-komga"', 'href="/organize"', 'AniList'):
+        for marker in ('id="menu-settings"', 'id="tools-settings"', 'data-credential="KOMGA_API_KEY"', 'id="test-komga"', 'href="/organize"', 'AniList'):
             self.assertIn(marker, settings)
 
     def test_header_and_portal_menus_follow_the_saved_order_and_visibility(self):

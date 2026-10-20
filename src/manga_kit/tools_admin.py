@@ -1,7 +1,8 @@
 """Management actions for the existing Tools feature set."""
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request, url_for
 
-from .credentials import save_credentials
+from .ai_assist import AIAssist
+from .credentials import check_credentials, save_credentials
 from .web import body_with_keys, require_admin_access
 
 maintenance = Blueprint("maintenance", __name__)
@@ -16,12 +17,17 @@ def settings():
 @maintenance.post("/api/tools/settings")
 def save_settings():
     require_admin_access()
-    body = body_with_keys({"revision", "komga_url", "rakuten", "anilist", "tools"}, {"revision"})
+    body = body_with_keys({"revision", "komga_url", "rakuten", "anilist", "tools", "credentials"}, {"revision"})
     revision = body.pop("revision")
     if type(revision) is not int or revision < 0:
         from .config import ConfigError
         raise ConfigError("設定の版を確認してください。")
-    return jsonify(current_app.extensions["preferences"].save(body, revision))
+    preferences, values = current_app.extensions["preferences"], body.pop("credentials", {})
+    if values:
+        # Keys typed beside their settings save together; check the settings first so a rejected form writes nothing.
+        preferences.build(body)
+        save_credentials(current_app.config["MANGA_KIT"], values)
+    return jsonify(preferences.save(body, revision))
 
 
 @maintenance.post("/api/tools/credentials")
@@ -75,8 +81,19 @@ def ai():
 
 @maintenance.post("/api/tools/ai/models")
 def ai_models():
-    require_admin_access(); body_with_keys(set())
-    return jsonify(models=current_app.extensions["ai_assist"].models())
+    require_admin_access()
+    body = body_with_keys({"tools", "api_key"})
+    service = current_app.extensions["ai_assist"]
+    if body:
+        # Models for the provider typed in the settings form, before it is saved.
+        preferences, tools = current_app.extensions["preferences"], body.get("tools", {})
+        if not isinstance(tools, dict) or set(tools) - {"ai_enabled", "ai_provider", "ai_url"}:
+            from .config import ConfigError
+            raise ConfigError("AIの接続設定を確認してください。")
+        if "api_key" in body:
+            check_credentials(preferences, {preferences.tools.ai_key_env: body["api_key"]})
+        service = AIAssist(preferences.build({"tools": tools}), service.store, service.metadata, body.get("api_key", ""))
+    return jsonify(models=service.models())
 
 
 @maintenance.post("/api/tools/ai/generate")

@@ -21,16 +21,21 @@ def write_version_supported(info) -> bool:
 
 
 class KomgaClient:
-    def __init__(self, settings: Settings, session=None):
+    def __init__(self, settings: Settings, session=None, api_key=""):
         self.settings = settings
         self.session = session or requests.Session()
+        # Only for checking a key typed in the settings form before it is saved.
+        self.api_key = api_key
+
+    def _key(self):
+        return secret(self.settings, self.settings.api_key_env, self.api_key)
 
     def get(self, endpoint: str, **params):
         if not self.settings.komga_url:
             raise KomgaError("Komgaの接続先が未設定です。config.yaml または KOMGA_URL を設定してください。")
-        key = secret(self.settings, self.settings.api_key_env)
+        key = self._key()
         if not key:
-            raise KomgaError("Komga APIキーが未設定です。設定した環境変数へ保存してください。")
+            raise KomgaError("Komga APIキーが未設定です。環境設定のKomgaで登録するか、環境変数へ設定してください。")
         try:
             response = self.session.get(self.settings.komga_url + endpoint, params=params,
                                         headers={"X-API-Key": key, "Accept": "application/json"},
@@ -65,11 +70,11 @@ class KomgaClient:
         return self._image("/api/v1/books/" + quote(identifier, safe="") + "/thumbnail", {}, "表紙画像")
 
     def _image(self, endpoint, params, label):
-        if not self.settings.komga_url or not secret(self.settings, self.settings.api_key_env):
+        if not self.settings.komga_url or not self._key():
             raise KomgaError("Komgaの接続先とAPIキーを設定してください。")
         try:
             with self.session.get(self.settings.komga_url + endpoint, params=params,
-                    headers={"X-API-Key": secret(self.settings, self.settings.api_key_env)},
+                    headers={"X-API-Key": self._key()},
                     timeout=self.settings.timeout_seconds, stream=True, allow_redirects=False) as response:
                 mime = response.headers.get("Content-Type", "").split(";")[0]
                 if response.status_code != 200 or mime not in {"image/jpeg", "image/png", "image/gif", "image/webp", "image/avif", "image/bmp"}:
@@ -93,11 +98,11 @@ class KomgaClient:
     def request(self, method, endpoint, body=None, **params):
         if method == "GET":
             return self.get(endpoint, **params)
-        if not self.settings.komga_url or not secret(self.settings, self.settings.api_key_env):
+        if not self.settings.komga_url or not self._key():
             raise KomgaError("Komgaの接続先とAPIキーを設定してください。")
         try:
             response = self.session.request(method, self.settings.komga_url + endpoint, params=params, json=body,
-                headers={"X-API-Key": secret(self.settings, self.settings.api_key_env), "Accept": "application/json"},
+                headers={"X-API-Key": self._key(), "Accept": "application/json"},
                 timeout=self.settings.timeout_seconds, allow_redirects=False)
             if not 200 <= response.status_code < 300:
                 raise KomgaError("Komgaの操作に失敗しました。接続先と権限を確認してください。")

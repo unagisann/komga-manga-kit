@@ -29,16 +29,30 @@ def credential_values(path):
         raise ConfigError("認証情報の保存ファイルの形式を確認してください。") from None
 
 
-def secret(settings, name):
-    return os.getenv(name, "") or credential_values(settings.tools.credentials_file).get(name, "")
+def credential_names(settings):
+    return {settings.api_key_env, settings.rakuten.application_id_env, settings.rakuten.access_key_env,
+            settings.tools.ai_key_env, settings.tools.notify_url_env}
+
+
+def secret(settings, name, typed=""):
+    # A value typed but not saved yet stands in for the file only: the environment still wins, as after saving.
+    return os.getenv(name, "") or typed or credential_values(settings.tools.credentials_file).get(name, "")
+
+
+def credential_sources(settings):
+    """Where each value in use comes from: "env", "file" or "" when unset. Never the values themselves."""
+    saved = credential_values(settings.tools.credentials_file)
+    return {name: "env" if os.getenv(name, "") else "file" if saved.get(name) else "" for name in credential_names(settings)}
+
+
+def check_credentials(settings, values):
+    if (not isinstance(values, dict) or set(values) - credential_names(settings) or any(not isinstance(v, str) or len(v) > 4096
+            or any(ord(c) < 32 for c in v) for v in values.values())):
+        raise ConfigError("登録できる認証情報の項目と形式を確認してください。")
 
 
 def save_credentials(settings, values):
-    allowed = {settings.api_key_env, settings.rakuten.application_id_env, settings.rakuten.access_key_env,
-               settings.tools.ai_key_env, settings.tools.notify_url_env}
-    if (not isinstance(values, dict) or set(values) - allowed or any(not isinstance(v, str) or len(v) > 4096
-            or any(ord(c) < 32 for c in v) for v in values.values())):
-        raise ConfigError("登録できる認証情報の項目と形式を確認してください。")
+    check_credentials(settings, values)
     if not settings.tools.credentials_file:
         raise ConfigError("Webから登録する場合は tools.credentials_file に専用の保存先を設定してください。")
     target = Path(settings.tools.credentials_file)
@@ -58,4 +72,4 @@ def save_credentials(settings, values):
         sync_directory(target.parent)
     finally:
         Path(temporary).unlink(missing_ok=True)
-    return {name: bool(secret(settings, name)) for name in allowed}
+    return {name: bool(source) for name, source in credential_sources(settings).items()}

@@ -8,7 +8,7 @@ import stat
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import zipfile
 from zoneinfo import ZoneInfo
 
@@ -72,6 +72,76 @@ class ToolsTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/tools/settings', json={'revision': 0, 'tools': {}}).status_code, 409)
         for values in [{'execution_enabled': True}, {'tools': {'credentials_file': '/tmp/no'}}, {'tools': {'anime_enabled': 1}}, {'komga_url': 'http://user:secret@example.org'}]:
             self.assertEqual(self.client.post('/api/tools/settings', json={'revision': 1, **values}).status_code, 400)
+
+    def test_credentials_sit_beside_their_settings_and_show_only_their_source(self):
+        save_credentials(self.settings, {'KOMGA_API_KEY': 'saved-key'})
+        with patch.dict(os.environ, {'MANGA_KIT_AI_KEY': 'env-key'}):
+            html = self.client.get('/settings').get_data(as_text=True)
+        section = lambda name: html.split(f'settings-block" id="{name}"')[1].split('</section>')[0]
+        self.assertIn('data-credential="KOMGA_API_KEY">保存済み', section('komga'))
+        self.assertIn('data-credential="RAKUTEN_APPLICATION_ID">未設定', section('sources'))
+        self.assertIn('data-credential="RAKUTEN_ACCESS_KEY">未設定', section('sources'))
+        self.assertIn('data-credential="MANGA_KIT_AI_KEY">環境変数で設定済み', section('ai'))
+        self.assertIn('data-credential="MANGA_KIT_NOTIFY_URL">未設定', section('notify'))
+        # A value in the environment wins over the file, so the Web field for it is closed.
+        self.assertRegex(section('ai'), r'name="MANGA_KIT_AI_KEY"[^>]* disabled>')
+        self.assertNotRegex(section('komga'), r'name="KOMGA_API_KEY"[^>]* disabled>')
+        self.assertNotIn('id="credentials"', html)
+        for value in ('saved-key', 'env-key'):
+            self.assertNotIn(value, html)
+
+    def test_typed_credentials_save_with_the_settings_or_not_at_all(self):
+        rejected = self.client.post('/api/tools/settings', json={'revision': 0, 'komga_url': 'ftp://komga.test', 'credentials': {'KOMGA_API_KEY': 'typed-key'}})
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(secret(self.settings, 'KOMGA_API_KEY'), '')
+        self.assertEqual(self.client.post('/api/tools/settings', json={'revision': 0, 'credentials': {'OTHER_SECRET': 'no'}}).status_code, 400)
+        self.assertIsNone(self.store.cached('preferences'))
+        saved = self.client.post('/api/tools/settings', json={'revision': 0, 'komga_url': 'http://komga.test', 'credentials': {'KOMGA_API_KEY': 'typed-key'}})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual((saved.json['revision'], saved.json['komga_url'], saved.json['credentials']['KOMGA_API_KEY']), (1, 'http://komga.test', 'file'))
+        self.assertNotIn('typed-key', saved.get_data(as_text=True))
+        self.assertEqual(secret(self.settings, 'KOMGA_API_KEY'), 'typed-key')
+        with patch.dict(os.environ, {'KOMGA_API_KEY': 'from-env'}):
+            self.assertEqual(self.client.post('/api/tools/settings', json={'revision': 1}).json['credentials']['KOMGA_API_KEY'], 'env')
+
+    def test_connection_check_uses_typed_values_without_saving_them(self):
+        save_credentials(self.settings, {'KOMGA_API_KEY': 'saved-key'})
+        session = self.app.extensions['komga'].session
+        reply = Mock(status_code=200); reply.json.return_value = [{'id': '1', 'name': '漫画'}]
+        with patch.object(session, 'get', return_value=reply) as get:
+            checked = self.client.post('/api/komga/test', json={'komga_url': 'http://typed.test/', 'api_key': 'typed-key'})
+            self.assertEqual((checked.status_code, checked.json['library_count']), (200, 1))
+            self.assertEqual((get.call_args.args[0], get.call_args.kwargs['headers']['X-API-Key']), ('http://typed.test/api/v1/libraries', 'typed-key'))
+            # Without a typed key the saved one is used; the environment still wins, as it would after saving.
+            self.client.post('/api/komga/test', json={'komga_url': 'http://typed.test'})
+            self.assertEqual(get.call_args.kwargs['headers']['X-API-Key'], 'saved-key')
+            with patch.dict(os.environ, {'KOMGA_API_KEY': 'from-env', 'KOMGA_URL': 'http://env.test'}):
+                self.client.post('/api/komga/test', json={'komga_url': 'http://typed.test', 'api_key': 'typed-key'})
+            self.assertEqual((get.call_args.args[0], get.call_args.kwargs['headers']['X-API-Key']), ('http://env.test/api/v1/libraries', 'from-env'))
+            calls = get.call_count
+            # Typed values need admin access and pass the checks used when saving.
+            for body, environ in [({'komga_url': 'http://typed.test'}, {'REMOTE_ADDR': '192.0.2.1'}), ({'komga_url': 'http://user:pw@typed.test'}, {}),
+                                  ({'komga_url': 1}, {}), ({'api_key': 'bad\nkey'}, {}), ({'other': 'x'}, {})]:
+                with self.subTest(body=body):
+                    self.assertEqual(self.client.post('/api/komga/test', json=body, environ_base=environ).status_code, 400)
+            self.assertEqual(get.call_count, calls)
+        self.assertIsNone(self.store.cached('preferences'))
+        self.assertEqual(secret(self.settings, 'KOMGA_API_KEY'), 'saved-key')
+
+    def test_model_list_uses_the_typed_provider_and_key_without_saving_them(self):
+        settings = replace(self.settings, demo=False)
+        settings.library_root.mkdir(parents=True)
+        app = create_app(settings=settings); self.addCleanup(app.extensions['jobs'].shutdown)
+        client = app.test_client()
+        typed = {'ai_enabled': True, 'ai_provider': 'chat', 'ai_url': 'https://typed.example/v1'}
+        with patch('manga_kit.sources.PublicHTTP.json', return_value={'data': [{'id': 'model-a'}]}) as upstream:
+            listed = client.post('/api/tools/ai/models', json={'tools': typed, 'api_key': 'typed-key'})
+        self.assertEqual(listed.json, {'models': ['model-a']})
+        self.assertEqual((upstream.call_args.args[0], upstream.call_args.kwargs['headers']), ('https://typed.example/v1/models', {'Authorization': 'Bearer typed-key'}))
+        self.assertFalse(app.config['MANGA_KIT'].tools.ai_enabled)
+        for body in [{'tools': {**typed, 'ai_model': 'x'}}, {'tools': {**typed, 'ai_provider': 'other'}}, {'tools': typed, 'api_key': 'bad\nkey'}]:
+            with self.subTest(body=body):
+                self.assertEqual(client.post('/api/tools/ai/models', json=body).status_code, 400)
 
     def test_write_actions_refuse_remote_unprotected_clients_and_foreign_origins(self):
         self.assertEqual(self.client.post('/api/tools/inventory/refresh', json={}, environ_base={'REMOTE_ADDR': '192.0.2.1'}).status_code, 400)

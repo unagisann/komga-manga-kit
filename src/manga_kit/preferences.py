@@ -5,7 +5,7 @@ import time
 from urllib.parse import urlsplit
 
 from .config import ConfigError
-from .credentials import secret
+from .credentials import credential_sources
 
 TOOLS_FIELDS = {"kobo_enabled", "anime_enabled", "discovery_enabled", "rankings_enabled", "mangaupdates_enabled",
                 "ai_enabled", "notify_enabled", "ai_provider", "ai_url", "ai_model", "public_komga_url"}
@@ -69,11 +69,9 @@ class Preferences:
     def view(self):
         self.reload()
         settings = self._current
-        names = {settings.api_key_env, settings.rakuten.application_id_env, settings.rakuten.access_key_env,
-                 settings.tools.ai_key_env, settings.tools.notify_url_env}
-        return {"revision": self._revision, "komga_url": settings.komga_url,
+        return {"revision": self._revision, "komga_url": settings.komga_url, "komga_url_env": bool(os.getenv("KOMGA_URL")),
                 "rakuten": {name: getattr(settings.rakuten, name) for name in ("enabled", "origin")},
                 "anilist": {"enabled": settings.anilist.enabled},
                 "tools": {name: getattr(settings.tools, name) for name in TOOLS_FIELDS},
-                "credentials": {name: bool(secret(settings, name)) for name in names},
+                "credentials": credential_sources(settings),
                 "credential_file_enabled": bool(settings.tools.credentials_file)}

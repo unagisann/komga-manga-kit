@@ -37,15 +37,17 @@ def summary_flags(summary, others=()):
 
 
 class AIAssist:
-    def __init__(self, settings, store, metadata):
+    def __init__(self, settings, store, metadata, api_key=""):
         self.settings, self.store, self.metadata = settings, store, metadata
+        # Only for listing models with a key typed in the settings form before it is saved.
+        self.api_key = api_key
         self.http = PublicHTTP(store, timeout=30)
 
     def request(self, method, path, body=None):
         tools = self.settings.tools
         if not tools.ai_enabled or not tools.ai_url:
             raise ConfigError("AI補助を有効にしてAPIのベースURLを指定してください。")
-        key = secret(self.settings, tools.ai_key_env)
+        key = secret(self.settings, tools.ai_key_env, self.api_key)
         if not key:
             raise ConfigError("AIのAPIキーを登録してください。")
         url = tools.ai_url.rstrip("/") + path

@@ -7,9 +7,10 @@ from flask import Blueprint, current_app, jsonify, render_template, request, url
 from werkzeug.exceptions import NotFound
 
 from .config import ConfigError
-from .credentials import secret
+from .credentials import check_credentials, secret
 from .auto_enrichment import PROVIDER_FIELDS, missing_fields
 from .japanese import search_key
+from .komga import KomgaClient
 from .organizer import plan_organization
 from .paths import map_komga_path
 
@@ -491,7 +492,17 @@ def api_settings():
 
 @api.post("/komga/test")
 def test_komga():
-    return jsonify(current_app.extensions["komga"].connection())
+    body = body_with_keys({"komga_url", "api_key"})
+    client = current_app.extensions["komga"]
+    if body:
+        # Values typed but not saved yet pass the same checks as saving, and environment variables still win.
+        require_admin_access()
+        preferences = current_app.extensions["preferences"]
+        if "api_key" in body:
+            check_credentials(preferences, {preferences.api_key_env: body["api_key"]})
+        candidate = preferences.build({"komga_url": body.get("komga_url", preferences.komga_url)})
+        client = KomgaClient(candidate, client.session, body.get("api_key", ""))
+    return jsonify(client.connection())
 
 
 @api.get("/komga/series")
