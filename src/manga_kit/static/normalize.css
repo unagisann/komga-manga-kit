@@ -16,6 +16,16 @@
 .normalize-option-fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:center; gap:20px; padding-top:18px; }
 .normalize-option-fields input[type="number"] { width:100%; max-width:200px; }
 .normalize-targets input[type="checkbox"] { width:18px; height:18px; accent-color:var(--accent); flex-shrink:0; }
+.normalize-targets .normalize-followup { margin:0 0 20px; }
+.normalize-targets .normalize-followup legend { margin-bottom:8px; font-size:13px; font-weight:600; }
+.normalize-followup .setting-rows { margin:0 0 8px; }
+.setting-row.is-unavailable { cursor:default; }
+.setting-row.is-unavailable strong { color:var(--muted); }
+.import-followup-steps { display:grid; gap:12px; margin:14px 0 0; padding:0; list-style:none; }
+.import-followup-steps li { display:grid; gap:6px; padding:12px 14px; border:1px solid var(--border); border-radius:var(--radius-sm); }
+.import-followup-steps li > div { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.import-followup-steps .text-link { display:inline-flex; align-items:center; gap:6px; font-size:12px; }
+.import-followup .button { margin-top:14px; }
 .normalize-controls { display:flex; flex-wrap:wrap; align-items:center; gap:16px 24px; margin-bottom:10px; }
 .normalize-auto { font-size:12px; }
 .normalize-preview-note { margin-top:10px; color:var(--muted); font-size:11px; }

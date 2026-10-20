@@ -28,9 +28,7 @@
 <div class="tool-head">
   <h1 class="tool-title">{{ ui.icon('square-plus', 25) }}新刊チェック<span class="tag tag-paper">楽天</span></h1>
   <div class="tool-actions">
-    <button class="button primary" type="button" data-tool-action="/api/tools/new-volumes/check">追加・変更分をチェック</button>
-    <button class="button" type="button" data-tool-action="/api/tools/new-volumes/check" data-payload='{"new_only":true}'>未チェックの作品だけ</button>
-    <button class="button" type="button" data-tool-action="/api/tools/new-volumes/check" data-payload='{"force":true}' data-confirm="連載中のすべての作品を問い合わせ直します。時間がかかります。実行しますか？">全件を再チェック</button>
+    <button class="button primary" type="button" data-tool-action="/api/tools/new-volumes/check">新刊をチェック</button>
   </div>
 </div>
 <div class="tool-lead">
@@ -39,9 +37,15 @@
   ｜ 全 {{ total }} 件{% if unchecked %}（未チェック {{ unchecked }} 件）{% endif %}
   ｜ 主軸: 楽天Books（紙）＋楽天Kobo（電子）
   {% set recent = sections.new|selectattr('recent')|list %}{% if recent %}<br><span class="tag tag-new">NEW</span> 直近{{ recent_days }}日に発売された新刊: {{ recent|length }}件{% endif %}
-  {% else %}チェック未実行です。［追加・変更分をチェック］を押すと、連載中の作品の新刊と予約を確認します。{% endif %}
+  {% else %}チェック未実行です。［新刊をチェック］を押すと、連載中の作品の新刊と予約を確認します。{% endif %}
   ｜ <a href="{{ url_for('metadata.index') }}">書誌の対応付け</a>
 </div>
+<p class="form-hint">未チェック・作品情報が変わった作品・前回失敗した作品・更新時期が来た作品をまとめて確認します。</p>
+<details class="tool-panel section" id="new-volume-check-options">
+  <summary>チェックの詳細設定</summary>
+  <p class="form-hint">通常は直近の結果を再利用し、7日経過や予約巻の発売日に再確認します。すべての連載中作品を今すぐ調べ直したい場合は、全件を再チェックできます。</p>
+  <button class="button" type="button" data-tool-action="/api/tools/new-volumes/check" data-payload='{"force":true}' data-confirm="連載中のすべての作品を問い合わせ直します。時間がかかります。実行しますか？">全件を再チェック</button>
+</details>
 {% if notification and notification.data.error %}<p class="notice warning">新刊は確認しましたが、通知に失敗しました。{{ notification.data.error }}</p>{% endif %}
 <p id="tool-status" class="notice" role="status" hidden></p>
 

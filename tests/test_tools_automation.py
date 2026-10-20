@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -67,9 +68,48 @@ class MoreToolsTests(unittest.TestCase):
         for data in [{**DEFAULTS, 'time': '25:00'}, {**DEFAULTS, 'steps': ['download']}, {**DEFAULTS, 'steps': [{}]}, {**DEFAULTS, 'auto_apply': True}]:
             with self.assertRaises(ConfigError):
                 service.save(data, 0)
-        self.assertIsNone(service.submit(after_import=True))
         with self.assertRaises(ConfigError):
             service.submit(identifier={})
+
+    def test_import_followup_choices_are_checked_remembered_and_carried_over(self):
+        service = self.app.extensions['automation']
+        options = {option['key']: option for option in service.import_options()}
+        self.assertIn('Komga', options['scan']['reason'])
+        self.assertEqual((options['bibliography']['reason'], options['classification']['reason']), ('', ''))
+        self.assertEqual(service.import_steps(), [])
+        # An old "after import" switch carries over the steps that still apply, and leaves the daily settings.
+        self.store.cache('automation:config', {'enabled': False, 'time': '04:00', 'steps': ['inventory', 'classification', 'bibliography'],
+                                               'post_import': True, 'auto_apply': False})
+        self.assertEqual(service.import_steps(), ['bibliography', 'classification'])
+        self.assertNotIn('post_import', service.config())
+        for steps in ('bibliography', ['download'], ['bibliography', 'bibliography'], [1], ['scan']):
+            with self.subTest(steps=steps), self.assertRaises(ConfigError):
+                service.choose_import(steps)
+        self.assertEqual(service.choose_import(['classification', 'bibliography']), ['bibliography', 'classification'])
+        self.assertEqual(service.choose_import([]), [])
+        self.assertEqual(service.import_steps(), [])
+
+    def test_steps_after_an_import_cover_only_the_series_it_placed(self):
+        service = self.app.extensions['automation']
+        series = [row.id for row in self.app.extensions['library'].scan().series]
+        placed = series[:1]
+        collected = {'counts': {'ready': 0, 'review': 0}, 'digest': 'x'}
+        with patch.object(self.app.extensions['auto_enrichment'], 'collect', return_value=collected) as collect:
+            service.step('classification', {'auto_apply': False, 'run_id': 'r', 'series': placed})
+            self.assertEqual(collect.call_args.args[0], placed)
+            service.step('classification', {'auto_apply': False, 'run_id': 'r'})
+            self.assertEqual(collect.call_args.args[0], series)
+        with patch.object(service, 'step', return_value={'done': True}) as step:
+            submitted = service.submit_import(['classification'], placed)
+            record = self.store.cached('automation:run:' + submitted['run_id'])['data']
+            self.assertEqual((record['config']['steps'], record['series'], record['after_import']), (['classification'], placed, True))
+            for _ in range(500):
+                if self.store.job(submitted['job_id'])['status'] not in {'queued', 'running'}:
+                    break
+                time.sleep(0.01)
+        self.assertEqual(self.store.job(submitted['job_id'])['status'], 'succeeded')
+        self.assertEqual((step.call_args.args[0], step.call_args.args[1]['series']), ('classification', placed))
+        self.assertEqual(self.store.cached('automation:run:' + submitted['run_id'])['data']['status'], 'completed')
 
     def test_failed_remote_operation_blocks_pipeline_retry_until_reviewed(self):
         run_id = 'b'*32

@@ -14,7 +14,7 @@ from .metadata import FIELDS
 from .normalization_scope import NormalizationTargets, within
 from .operations import OperationService, digest
 from .organizer import plan_organization
-from .state import StateConflict
+from .state import StateConflict, timestamp
 
 
 def needs_rebuild(recipe):
@@ -299,7 +299,7 @@ class NormalizationService:
         scope = self.targets.resolve(options)
         return self.jobs.submit_task("normalization_check", lambda progress: self.check(progress, resolved_scope=scope), key=scope)
 
-    def submit_auto(self, options=None):
+    def submit_auto(self, options=None, followup=()):
         if self.settings.demo or not self.settings.execution_enabled or not self.settings.web_execution_enabled:
             raise ConfigError("Web実行を有効にした実ライブラリで利用してください。")
         scope = self.targets.resolve(options)
@@ -326,7 +326,7 @@ class NormalizationService:
             if reason:
                 return {"check_id": check_id, "skipped": True, "reason": reason}
             progress(0, result["counts"]["ready"])
-            return {**self.execute(check_id, result["digest"]), "check_id": check_id}
+            return {**self.execute(check_id, result["digest"], followup), "check_id": check_id}
 
         action_id = self.jobs.submit_task("normalization_execute", run, key={"auto": scope}, child_kind="normalization_check")
         return self.store.queued_child(action_id), action_id
@@ -337,8 +337,9 @@ class NormalizationService:
             raise ConfigError("完了した追加・変更分の確認結果を選んでください。")
         return job["result"]
 
-    def execute(self, job_id, confirmation):
+    def execute(self, job_id, confirmation, followup=()):
         result = self.checked(job_id)
+        self._not_accepted(job_id)
         if not result["operation_id"] or confirmation != result["digest"]:
             raise StateConflict("実行できる計画を確認してから実行してください。")
         self.targets.verify(result.get("scope"))
@@ -355,17 +356,19 @@ class NormalizationService:
         self._remember(result, operation, normalized)
         output = {"operation_id": operation["plan"]["id"], "status": operation["status"], "files": operation["moved_count"]}
         from .komga_followup import KomgaFollowups
+        placed = {group["target_id"] for group in operation["plan"]["groups"]}
         output["komga_followup"] = KomgaFollowups(self.settings, self.store).moved(
-            "normalize:" + operation["plan"]["id"], normalized.series,
-            {group["target_id"] for group in operation["plan"]["groups"]}, "/normalize?check=" + job_id)
-        if getattr(self, "after_execute", None):
+            "normalize:" + operation["plan"]["id"], normalized.series, placed, "/normalize?check=" + job_id)
+        # The steps chosen to follow this import run for the series it placed, and only for them.
+        series = [row.id for row in normalized.series if row.id in placed]
+        if followup and series and getattr(self, "after_execute", None):
             try:
-                output["post_import_job"] = self.after_execute()
-            except (ConfigError, StateConflict):
-                output["post_import_error"] = "取り込み整理は完了しました。取り込み後の処理は管理の自動更新から実行してください。"
+                output["post_import"] = self.after_execute(list(followup), series)
+            except (ConfigError, StateConflict) as error:
+                output["post_import_error"] = f"取り込み整理は完了しました。続けて行う処理は開始できませんでした。{error}"
         return output
 
-    def submit_action(self, job_id, confirmation, *, restore=False):
+    def submit_action(self, job_id, confirmation, *, restore=False, followup=()):
         result = self.checked(job_id)
         if not result["operation_id"] or confirmation != result["digest"]:
             raise StateConflict("確認した操作を選んでください。")
@@ -373,9 +376,78 @@ class NormalizationService:
         allowed = {"completed", "failed", "running", "restoring"} if restore else {"planned"}
         if operation["status"] not in allowed:
             raise StateConflict("この操作は既に処理済みか、復元が必要な状態です。")
-        action = self.restore if restore else self.execute
+        if not restore:
+            self._not_accepted(job_id)
+        action = (lambda: self.restore(job_id, confirmation)) if restore else (lambda: self.execute(job_id, confirmation, followup))
         return self.jobs.submit_task("normalization_restore" if restore else "normalization_execute",
-                                     lambda progress: action(job_id, confirmation), key=[result["operation_id"], confirmation])
+                                     lambda progress: action(), key=[result["operation_id"], confirmation])
+
+    # Recording archives as they are: the check lists them to change or review, the user keeps them unchanged, and later
+    # checks leave them out until the archive, its series information or the rules change. No file is touched.
+    def baseline_offer(self, result):
+        paths = sorted(item["source"] for item in result["items"] if item["state"] in {"ready", "blocked"})
+        states = [item["state"] for item in result["items"] if item["source"] in paths]
+        return {"paths": paths, "ready": states.count("ready"), "blocked": states.count("blocked"),
+                "confirm": digest({path: result["inventory"][path] for path in paths})}
+
+    def baseline(self, job_id):
+        record = self.store.cached("normalization:baseline:" + job_id)
+        return record["data"] if record else None
+
+    def accept(self, job_id, confirmation):
+        result = self.checked(job_id)
+        offer = self.baseline_offer(result)
+        if not offer["paths"] or confirmation != offer["confirm"]:
+            raise StateConflict("登録する確認結果を選び直してください。")
+        if result["truncated"] or result["warnings"]:
+            raise ConfigError("蔵書を全件確認できなかった結果は登録できません。")
+        if result["operation_id"] and self.operations.inspect(result["operation_id"])["status"] != "planned":
+            raise StateConflict("実行した確認結果は登録できません。新しく差分を確認してください。")
+        self.targets.verify(result.get("scope"))
+        scanned = self.library.scan(refresh=True, reuse_metadata=True)
+        current = {book.path: self._context(series) for series in scanned.series for book in series.books}
+        if asdict(self.settings.layout) != result["layout"]:
+            raise StateConflict("差分の確認後に整理ルールが変わりました。再確認してください。")
+        with LibraryFilesystem(self.settings.library_root) if not self.settings.demo else _demo_filesystem() as fs:
+            for path in offer["paths"]:
+                expected = result["inventory"][path]
+                if current.get(path) != expected["metadata"] or (fs and fs.signature(path) != expected["signature"]):
+                    raise StateConflict("差分の確認後に書庫または作品情報が変わりました。再確認してください。")
+        previous = self.store.normalization_files()
+        # The record comes first, so a registration is always one that can be undone.
+        self.store.cache("normalization:baseline:" + job_id, {"created": timestamp(), "ready": offer["ready"], "blocked": offer["blocked"],
+            "paths": {path: {"before": previous.get(path), "after": result["inventory"][path]} for path in offer["paths"]}}, revision=0)
+        self.store.remember_normalization({path: result["inventory"][path] for path in offer["paths"]})
+        return {"check_id": job_id, "registered": len(offer["paths"])}
+
+    def unaccept(self, job_id):
+        record = self.store.cached("normalization:baseline:" + job_id)
+        if not record or record["data"].get("restored"):
+            raise ConfigError("取り消せる登録がありません。")
+        current = self.store.normalization_files()
+        # Archives organized or recorded again since then keep their newer record.
+        restore = {path: value["before"] for path, value in record["data"]["paths"].items() if current.get(path) == value["after"]}
+        self.store.cache("normalization:baseline:" + job_id, {**record["data"], "restored": timestamp()}, revision=record["revision"])
+        self.store.remember_normalization({path: value for path, value in restore.items() if value is not None},
+                                          [path for path, value in restore.items() if value is None])
+        return {"check_id": job_id, "restored": len(restore), "kept": len(record["data"]["paths"]) - len(restore)}
+
+    def _not_accepted(self, job_id):
+        record = self.baseline(job_id)
+        if record and not record.get("restored"):
+            raise StateConflict("この確認結果の書庫は、変更せずに整理済みとして登録しました。新しく差分を確認してください。")
+
+    def submit_baseline(self, job_id, confirmation=None, *, undo=False):
+        # Requests that cannot apply are refused before they wait in the queue; the task checks everything again.
+        if undo:
+            record = self.baseline(job_id)
+            if not record or record.get("restored"):
+                raise ConfigError("取り消せる登録がありません。")
+            return self.jobs.submit_task("normalization_baseline_restore", lambda progress: self.unaccept(job_id), key=[job_id, "undo"])
+        if confirmation != self.baseline_offer(self.checked(job_id))["confirm"]:
+            raise StateConflict("登録する確認結果を選び直してください。")
+        self._not_accepted(job_id)
+        return self.jobs.submit_task("normalization_baseline", lambda progress: self.accept(job_id, confirmation), key=[job_id, confirmation])
 
     def _remember(self, result, operation, normalized):
         values, removed = {}, []

@@ -15,8 +15,14 @@
   const options = () => ({library: form.elements.library.value,
     subpath: form.elements.library.value === 'all' ? '' : form.elements.subpath.value.trim(),
     limit: Number(form.elements.limit.value), recheck: form.elements.recheck.checked});
+  // What follows the import is sent only when it can be chosen at all; otherwise the remembered choice stays.
+  const followupChoices = () => [...(form?.querySelectorAll('[name=followup]') || [])].filter(input => !input.hasAttribute('disabled'));
+  const followup = () => followupChoices().length ? {followup: followupChoices().filter(input => input.checked).map(input => input.value)} : {};
   const updateExecution = () => {
     if ($('#normalization-execute')) $('#normalization-execute').disabled = stale || !$('#normalization-reviewed')?.checked;
+    if ($('#normalization-baseline')) $('#normalization-baseline').disabled = stale || !$('#normalization-baseline-reviewed')?.checked;
+    const chosen = followupChoices().filter(input => input.checked).map(input => input.closest('label').querySelector('strong').textContent);
+    if ($('#normalization-followup-summary')) $('#normalization-followup-summary').textContent = `整理の後に続けて行う処理：${chosen.join('、') || 'なし'}`;
   };
   const update = () => {
     const current = options();
@@ -41,14 +47,14 @@
   form?.addEventListener('invalid', () => { $('#normalization-options').open = true; }, true);
   form?.addEventListener('submit', async event => {
     event.preventDefault();
-    const body = {...options(), auto_execute: $('#normalization-auto').checked && !$('#normalization-auto').disabled};
+    const body = {...options(), auto_execute: $('#normalization-auto').checked && !$('#normalization-auto').disabled, ...followup()};
     fields.disabled = true; $('#normalization-error').hidden = true;
     try {
       const job = await post('/api/normalization/checks', body);
       const target = new URL('/normalize', location.origin);
       target.searchParams.set('check', job.id);
       if (job.action_id) target.searchParams.set('action', job.action_id);
-      for (const [key, value] of Object.entries(body)) if (key !== 'auto_execute') target.searchParams.set(key, value);
+      for (const [key, value] of Object.entries(body)) if (!['auto_execute', 'followup'].includes(key)) target.searchParams.set(key, value);
       location.assign(target);
     } catch (reason) { error(reason.message); fields.disabled = false; update(); }
   });
@@ -70,17 +76,30 @@
     finally { button.disabled = false; }
   });
   $('#normalization-reviewed')?.addEventListener('change', updateExecution);
+  $('#normalization-baseline-reviewed')?.addEventListener('change', updateExecution);
+  // Recording archives as they are, or giving that back: no file changes, and the result shows as the page's action.
+  for (const [selector, action] of [['#normalization-baseline', 'baseline'], ['#normalization-baseline-undo', 'baseline-undo']]) {
+    $(selector)?.addEventListener('click', async event => {
+      const button = event.currentTarget; button.disabled = true; $('#normalization-error').hidden = true;
+      try {
+        const job = await post(`/api/normalization/checks/${encodeURIComponent(button.dataset.checkId)}/${action}`,
+          action === 'baseline' ? {confirm: button.dataset.confirm} : {});
+        location.assign(`/normalize?check=${encodeURIComponent(button.dataset.checkId)}&action=${encodeURIComponent(job.id)}`);
+      } catch (reason) { error(reason.message); button.disabled = false; }
+    });
+  }
   if (form) update();
   for (const action of ['execute', 'restore']) {
     $(`#normalization-${action}`)?.addEventListener('click', async event => {
       const button = event.currentTarget; button.disabled = true; $('#normalization-error').hidden = true;
       try {
-        const job = await post(`/api/normalization/checks/${encodeURIComponent(button.dataset.checkId)}/${action}`, {confirm: button.dataset.confirm});
+        const job = await post(`/api/normalization/checks/${encodeURIComponent(button.dataset.checkId)}/${action}`,
+          {confirm: button.dataset.confirm, ...(action === 'execute' ? followup() : {})});
         location.assign(`/normalize?check=${encodeURIComponent(button.dataset.checkId)}&action=${encodeURIComponent(job.id)}`);
       } catch (reason) { error(reason.message); button.disabled = false; }
     });
   }
-  for (const [selector, message] of [['#normalization-result', '#normalization-progress'], ['#normalization-action', '#normalization-action-status']]) {
+  for (const [selector, message] of [['#normalization-result', '#normalization-progress'], ['#normalization-action', '#normalization-action-status'], ['#import-followup', null]]) {
     const element = $(selector);
     if (!element || !['queued', 'running'].includes(element.dataset.status)) continue;
     const poll = async () => {
@@ -89,7 +108,7 @@
         if (!response.ok) throw new Error('進捗を取得できませんでした。処理履歴から確認できます。');
         const job = await response.json();
         if (!['queued', 'running'].includes(job.status)) { location.reload(); return; }
-        if ($(message)) $(message).textContent = job.status === 'queued'
+        if (message && $(message)) $(message).textContent = job.status === 'queued'
           ? `順番待ち${job.queue_position > 1 ? ' · 前に'+(job.queue_position-1)+'件' : ''}`
           : `処理中 · ${job.current}${job.total === null ? '' : ' / ' + job.total}冊`;
         setTimeout(poll, 1000);

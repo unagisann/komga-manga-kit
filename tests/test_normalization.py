@@ -146,6 +146,90 @@ class NormalizationTests(unittest.TestCase):
         self.assertNotIn('id="normalization-auto" checked', html)
         self.assertIn('差分を確認', html)
 
+    def test_archives_recorded_as_they_are_stay_out_of_later_checks_until_they_change(self):
+        before, checked = self.files(), self.check()
+        offer = self.service.baseline_offer(checked['result'])
+        self.assertEqual((offer['ready'], offer['blocked']), (2, 0))
+        self.assertIn('id="normalization-baseline"', self.client.get('/normalize?check=' + checked['id']).get_data(as_text=True))
+        url = f'/api/normalization/checks/{checked["id"]}/baseline'
+        self.assertEqual(self.client.post(url, json={'confirm': 'other'}).status_code, 409)
+        self.assertEqual(self.client.post(url, json={'confirm': offer['confirm']}, environ_base={'REMOTE_ADDR': '192.0.2.1'}).status_code, 400)
+        self.assertEqual(self.client.post(url, json={'confirm': offer['confirm']}, headers={'Origin': 'https://evil.example'}).status_code, 403)
+        self.assertEqual(self.client.post(url + '-undo', json={}).status_code, 400)
+        response = self.client.post(url, json={'confirm': offer['confirm']})
+        self.assertEqual(response.status_code, 202, response.json)
+        recorded = self.wait_job(response.json['id'])
+        self.assertEqual((recorded['status'], recorded['result']['registered']), ('succeeded', 2))
+        self.assertEqual(self.files(), before)
+        page = self.client.get(f'/normalize?check={checked["id"]}&action={recorded["id"]}').get_data(as_text=True)
+        self.assertIn('変更せずに整理済みとして登録しました', page)
+        self.assertNotIn('id="normalization-execute"', page)
+        self.assertIn('id="normalization-baseline-undo"', page)
+        # The plan of a check recorded as it is no longer runs.
+        self.assertEqual(self.client.post(f'/api/normalization/checks/{checked["id"]}/execute', json={'confirm': checked['result']['digest']}).status_code, 409)
+        self.assertEqual(self.check()['result']['items'], [])
+        undone = self.wait_job(self.client.post(url + '-undo', json={}).json['id'])
+        self.assertEqual((undone['status'], undone['result']['restored'], undone['result']['kept']), ('succeeded', 2, 0))
+        again = self.check()
+        self.assertEqual(again['result']['counts']['ready'], 2)
+        offer = self.service.baseline_offer(again['result'])
+        self.wait_job(self.client.post(f'/api/normalization/checks/{again["id"]}/baseline', json={'confirm': offer['confirm']}).json['id'])
+        # A changed archive brings its series back, as a new volume would.
+        self.archive(self.folder / '元の名前 第1巻.zip', 3)
+        self.assertEqual(self.check()['result']['counts']['ready'], 2)
+        self.assertEqual(self.files().keys(), before.keys())
+
+    def test_recording_archives_as_they_are_needs_no_web_execution(self):
+        app = create_app(settings=replace(self.settings, execution_enabled=False, web_execution_enabled=False))
+        self.addCleanup(app.extensions['jobs'].shutdown)
+        self.client, self.store, self.service = app.test_client(), app.extensions['state'], app.extensions['normalization']
+        checked = self.check()
+        offer = self.service.baseline_offer(checked['result'])
+        recorded = self.wait_job(self.client.post(f'/api/normalization/checks/{checked["id"]}/baseline', json={'confirm': offer['confirm']}).json['id'])
+        self.assertEqual(recorded['status'], 'succeeded')
+        self.assertEqual(self.check()['result']['items'], [])
+
+    def test_chosen_steps_follow_the_import_for_the_series_it_placed_before_komga_is_offered(self):
+        settings = replace(self.settings, anilist=replace(self.settings.anilist, enabled=True))
+        app = create_app(settings=settings)
+        self.addCleanup(app.extensions['jobs'].shutdown); self.addCleanup(app.extensions['automation'].shutdown)
+        self.client, self.store, automation = app.test_client(), app.extensions['state'], app.extensions['automation']
+        page = self.client.get('/normalize').get_data(as_text=True)
+        self.assertIn('name="followup" value="classification"', page)
+        self.assertRegex(page, r'value="scan" disabled')
+        for body, environ in [({'followup': ['scan']}, {}), ({'followup': ['download']}, {}), ({'followup': 'classification'}, {}),
+                              ({'followup': ['classification']}, {'REMOTE_ADDR': '192.0.2.1'})]:
+            with self.subTest(body=body):
+                self.assertEqual(self.client.post('/api/normalization/checks', json=body, environ_base=environ).status_code, 400)
+        self.assertEqual(self.store.jobs(), [])
+        checked = self.check({'followup': ['classification']})
+        self.assertEqual(automation.import_steps(), ['classification'])
+        self.assertIn('value="classification" checked', self.client.get('/normalize?check=' + checked['id']).get_data(as_text=True))
+        offered, release = 'f' * 32, Event()
+        self.store.cache('komga:followup:' + offered, {'choices': [], 'back_url': '/normalize'})
+        def step(key, config):
+            release.wait(5)
+            return {'results': [{'provider': 'anilist', 'batches': [{'job_id': 'b' * 32, 'counts': {'ready': 1, 'review': 2}, 'saved': None}]}]}
+        with patch('manga_kit.komga_followup.KomgaFollowups.moved', return_value=offered), patch.object(automation, 'step', side_effect=step) as called:
+            response = self.client.post(f'/api/normalization/checks/{checked["id"]}/execute',
+                                        json={'confirm': checked['result']['digest'], 'followup': ['classification']})
+            self.assertEqual(response.status_code, 202, response.json)
+            action = self.wait_job(response.json['id'])
+            followed = action['result']['post_import']
+            url = f'/normalize?check={checked["id"]}&action={action["id"]}'
+            # The Komga prompt waits for the steps, so it can send what they found.
+            waiting = self.client.get(url).get_data(as_text=True)
+            self.assertIn('id="import-followup"', waiting)
+            self.assertNotIn('id="komga-followup"', waiting)
+            release.set()
+            self.assertEqual(self.wait_job(followed['job_id'])['status'], 'succeeded')
+        placed = [row.id for row in app.extensions['library'].scan().series]
+        self.assertEqual((called.call_args.args[0], called.call_args.args[1]['series']), ('classification', placed))
+        done = self.client.get(url).get_data(as_text=True)
+        self.assertIn('id="komga-followup"', done)
+        self.assertIn('batch=' + 'b' * 32, done)
+        self.assertIn('候補あり 3件', done)
+
     def test_scoped_execution_and_restore_leave_other_libraries_unprocessed(self):
         other = self.settings.library_root / '完結' / '[別作者] 別作品'
         other.mkdir(parents=True)

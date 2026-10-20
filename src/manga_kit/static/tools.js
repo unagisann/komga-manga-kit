@@ -90,7 +90,7 @@
   document.querySelector('#tool-automation')?.addEventListener('submit',async event => {
     event.preventDefault(); const form = event.target;
     const body = {revision:Number(form.dataset.revision),time:form.elements.time.value,steps:[...form.querySelectorAll('[name=steps]:checked')].map(input => input.value)};
-    ['enabled','post_import','auto_apply'].forEach(key => body[key] = form.elements[key].checked);
+    ['enabled','auto_apply'].forEach(key => body[key] = form.elements[key].checked);
     try { await post('/api/tools/automation/settings',body); location.reload(); } catch(error) { show(error.message); }
   });
   document.querySelector('#tool-move')?.addEventListener('submit',async event => {

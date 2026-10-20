@@ -274,8 +274,8 @@ def automation():
 @maintenance.post("/api/tools/automation/settings")
 def automation_settings():
     require_admin_access()
-    body = body_with_keys({"revision", "enabled", "time", "steps", "post_import", "auto_apply"},
-                          {"revision", "enabled", "time", "steps", "post_import", "auto_apply"})
+    body = body_with_keys({"revision", "enabled", "time", "steps", "auto_apply"},
+                          {"revision", "enabled", "time", "steps", "auto_apply"})
     revision = body.pop("revision")
     if type(revision) is not int or revision < 0:
         from .config import ConfigError

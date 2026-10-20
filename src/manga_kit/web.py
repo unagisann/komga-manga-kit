@@ -9,6 +9,7 @@ from werkzeug.exceptions import NotFound
 from .config import ConfigError
 from .credentials import check_credentials, secret
 from .auto_enrichment import PROVIDER_FIELDS, missing_fields
+from .automation import IMPORT_STEPS
 from .japanese import search_key
 from .komga import KomgaClient
 from .organizer import plan_organization
@@ -43,22 +44,34 @@ def normalization_index():
         raise NotFound()
     operation = service.operations.inspect(job["result"]["operation_id"]) if job and job["result"] and job["result"].get("operation_id") else None
     action = store.job(request.args["action"], include_result=True) if request.args.get("action") else None
-    if request.args.get("action") and (action is None or action["kind"] not in {"normalization_execute", "normalization_restore"}):
+    if request.args.get("action") and (action is None or action["kind"] not in {"normalization_execute", "normalization_restore", "normalization_baseline", "normalization_baseline_restore"}):
         raise NotFound()
-    active = [entry for entry in store.jobs() if entry["kind"] in {"normalization_execute", "normalization_restore"}
+    active = [entry for entry in store.jobs() if entry["kind"] in {"normalization_execute", "normalization_restore", "normalization_baseline", "normalization_baseline_restore"}
               and entry["status"] in {"queued", "running"}]
     if active and action is None:
         action = active[0]
     items, paging = paginate(job["result"]["items"], size=20) if job and job["result"] else ([], None)
     scope = (job.get("result") or {}).get("scope") if job else None
-    followup_id = (action.get("result") or {}).get("komga_followup") if action and action["status"] == "succeeded" else None
+    done = (action.get("result") or {}) if action and action["status"] == "succeeded" else {}
+    # The steps that follow the import come first; the Komga prompt waits until they finish, so it sends what they found.
+    imported = None
+    if done.get("post_import"):
+        run = store.cached("automation:run:" + done["post_import"]["run_id"])
+        imported = {"job": store.job(done["post_import"]["job_id"]), "run": run["data"] if run else None}
+    waiting = bool(imported and imported["job"] and imported["job"]["status"] in {"queued", "running"})
+    followup_id = done.get("komga_followup") if not waiting else None
     followup_context = {"komga_followup": current_app.extensions["maintenance_ops"].followups.inspect(followup_id)} if followup_id else {}
-    return render_template("normalize.html", check=job, operation=operation, action=action, busy=bool(active),
+    automation = current_app.extensions["automation"]
+    succeeded = job and job["status"] == "succeeded" and job["result"]
+    baseline = {"offer": service.baseline_offer(job["result"]), "record": service.baseline(job["id"])} if succeeded else None
+    return render_template("normalize.html", baseline=baseline, check=job, operation=operation, action=action, busy=bool(active),
                            items=items, pagination=paging, target_libraries=service.targets.libraries(),
                            target_scope=scope or {"library": request.args.get("library", "all"),
                                "subpath": request.args.get("subpath", ""),
                                "limit": request.args.get("limit", configuration().max_files),
-                               "recheck": request.args.get("recheck") == "true"}, **followup_context)
+                               "recheck": request.args.get("recheck") == "true"},
+                           import_options=automation.import_options(), import_labels=IMPORT_STEPS, imported=imported,
+                           import_error=done.get("post_import_error"), auto_apply=automation.config()["auto_apply"], **followup_context)
 
 
 def require_normalization_execution():
@@ -83,14 +96,19 @@ def require_admin_access():
 
 @api.post("/normalization/checks")
 def normalization_check():
-    body = body_with_keys({"library", "subpath", "limit", "recheck", "auto_execute"})
-    automatic = body.pop("auto_execute", False)
+    body = body_with_keys({"library", "subpath", "limit", "recheck", "auto_execute", "followup"})
+    automatic, followup = body.pop("auto_execute", False), body.pop("followup", None)
     if type(automatic) is not bool:
         raise ConfigError("そのまま実行は true / false で指定してください。")
     service = current_app.extensions["normalization"]
     if automatic:
         require_normalization_execution()
-        job_id, action_id = service.submit_auto(body)
+    if followup is not None:
+        # What follows an import is remembered whenever it is sent, so the page shows it again after the check.
+        require_admin_access()
+        followup = current_app.extensions["automation"].choose_import(followup)
+    if automatic:
+        job_id, action_id = service.submit_auto(body, followup or [])
         return jsonify(**current_app.extensions["state"].job(job_id), action_id=action_id), 202
     job_id = service.submit_check(body)
     return jsonify(current_app.extensions["state"].job(job_id)), 202
@@ -105,11 +123,18 @@ def normalization_libraries():
 
 @api.post("/normalization/checks/<job_id>/<action>")
 def normalization_action(job_id, action):
-    require_normalization_execution()
-    if action not in {"execute", "restore"}:
+    if action not in {"execute", "restore", "baseline", "baseline-undo"}:
         raise NotFound()
-    body = body_with_keys({"confirm"}, {"confirm"})
-    task = current_app.extensions["normalization"].submit_action(job_id, body["confirm"], restore=action == "restore")
+    if action.startswith("baseline"):
+        # Recording archives as they are changes no file: it needs admin access, not Web execution.
+        require_admin_access()
+        body = body_with_keys({"confirm"}, {"confirm"}) if action == "baseline" else body_with_keys(set())
+        task = current_app.extensions["normalization"].submit_baseline(job_id, body.get("confirm"), undo=action == "baseline-undo")
+        return jsonify(current_app.extensions["state"].job(task)), 202
+    require_normalization_execution()
+    body = body_with_keys({"confirm", "followup"} if action == "execute" else {"confirm"}, {"confirm"})
+    followup = current_app.extensions["automation"].choose_import(body["followup"]) if "followup" in body else []
+    task = current_app.extensions["normalization"].submit_action(job_id, body["confirm"], restore=action == "restore", followup=followup)
     return jsonify(current_app.extensions["state"].job(task)), 202
 
 
@@ -379,8 +404,8 @@ def metadata_index():
 
 
 # The job kinds each maintenance card runs. Moves and Komga updates share kinds; the operation in the result tells them apart.
-MAINTENANCE_RUNS = {"normalize.index": (("normalization_check", "normalization_execute", "normalization_restore"), None),
-                    "refresh-library": (("scan", "scan_refresh"), None),
+MAINTENANCE_RUNS = {"normalize.index": (("normalization_check", "normalization_execute", "normalization_restore",
+                                         "normalization_baseline", "normalization_baseline_restore"), None),
                     "metadata.index": (("enrichment",), None),
                     "maintenance.ai": (("ai_generate",), None),
                     "maintenance.page_books": (("cover_screening", "pages_execute", "pages_restore"), None),
@@ -396,7 +421,8 @@ def management_index():
     from .tools_admin import cover_todo
     store = current_app.extensions["state"]
     status = {endpoint: store.last_run(kinds, operation) for endpoint, (kinds, operation) in MAINTENANCE_RUNS.items()}
-    check, executed = store.last_run(("normalization_check",))["last"], store.last_run(("normalization_execute",))["last"]
+    # A check is settled once it runs or its archives are recorded as they are.
+    check, executed = store.last_run(("normalization_check",))["last"], store.last_run(("normalization_execute", "normalization_baseline"))["last"]
     counts = check.get("counts") if check and check["status"] == "succeeded" else None
     if (counts and counts["ready"] + counts["blocked"]
             and not (executed and executed["status"] == "succeeded" and executed["created"] > check["created"])):

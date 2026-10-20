@@ -18,7 +18,10 @@ from .durability import durable_mkdir
 STEPS = {"scan": "Komgaスキャン", "inventory": "蔵書情報", "bibliography": "書誌・読み・著者の補完",
          "classification": "タグ・ジャンル補完", "anime": "今期アニメ", "new_volumes": "新刊チェック",
          "discovery": "漫画の発見", "rankings": "今年のマンガ大賞", "shelves": "スマート本棚"}
-DEFAULTS = {"enabled": False, "time": "04:00", "steps": ["inventory"], "post_import": False, "auto_apply": False}
+DEFAULTS = {"enabled": False, "time": "04:00", "steps": ["inventory"], "auto_apply": False}
+# What may follow an import, chosen on the import page and run only for the series that import placed.
+IMPORT_STEPS = {"scan": "Komgaでスキャン（解析が終わるまで待つ）", "bibliography": "書誌・読み・著者の候補を取得",
+                "classification": "タグ・ジャンルの候補を取得"}
 
 
 class Automation:
@@ -43,13 +46,14 @@ class Automation:
 
     def config(self):
         value = self.store.cached("automation:config")
-        data = dict(value["data"]) if value else dict(DEFAULTS)
+        # Settings that moved away (what follows an import is chosen on the import page now) are dropped.
+        data = {key: (value["data"] if value else DEFAULTS).get(key, DEFAULTS[key]) for key in DEFAULTS}
         # Steps removed from the application (such as reading status) are skipped, not failed.
         data["steps"] = [step for step in data["steps"] if step in STEPS] or list(DEFAULTS["steps"])
         return {"revision": value["revision"] if value else 0, **data}
 
     def save(self, data, revision):
-        if (not isinstance(data, dict) or set(data) != set(DEFAULTS) or any(type(data[key]) is not bool for key in ("enabled", "post_import", "auto_apply"))
+        if (not isinstance(data, dict) or set(data) != set(DEFAULTS) or any(type(data[key]) is not bool for key in ("enabled", "auto_apply"))
                 or not isinstance(data["time"], str) or not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", data["time"])
                 or not isinstance(data["steps"], list) or not data["steps"] or any(not isinstance(step, str) for step in data["steps"])
                 or set(data["steps"]) - STEPS.keys() or len(set(data["steps"])) != len(data["steps"])):
@@ -61,32 +65,75 @@ class Automation:
             self.start()
         return self.config()
 
-    def submit(self, *, identifier=None, after_import=False):
+    def submit(self, *, identifier=None):
+        """The saved daily steps now, or the unfinished steps of an earlier run."""
         if identifier is not None and (not isinstance(identifier, str) or not re.fullmatch(r"[a-f0-9]{32}", identifier)):
             raise ConfigError("再開する処理のIDを確認してください。")
-        config = self.config()
-        if after_import and not config["post_import"]:
-            return None
         if identifier:
             value = self.store.cached("automation:run:" + identifier)
             if not value:
                 raise ConfigError("再開する処理が見つかりません。")
-            run = value["data"]
-            if run["status"] == "completed":
+            if value["data"]["status"] == "completed":
                 raise ConfigError("この処理は完了しています。")
-        else:
-            run = {"id": uuid4().hex, "config": config, "created": timestamp(), "status": "queued", "steps": {}, "after_import": after_import}
+            return self._submit(value["data"], {"resume": identifier})
+        config = self.config()
+        run = {"id": uuid4().hex, "config": config, "created": timestamp(), "status": "queued", "steps": {}, "after_import": False}
+        # An identical waiting run absorbs this one, so the record is written only once it starts.
+        return self._submit(run, {"config": config}, record=True)
+
+    def submit_import(self, steps, series):
+        """The steps chosen on the import page, for the series that import placed. Each import is its own run, recorded
+        before it starts so the import page can follow it."""
+        run = {"id": uuid4().hex, "config": {**self.config(), "steps": list(steps)}, "created": timestamp(), "status": "queued",
+               "steps": {}, "after_import": True, "series": sorted(series)}
+        self.store.cache("automation:run:" + run["id"], run)
+        return {"job_id": self._submit(run, {"import": run["id"]}), "run_id": run["id"]}
+
+    def _submit(self, run, key, *, record=False):
         def execute(progress):
-            if not identifier:
+            if record:
                 self.store.cache("automation:run:" + run["id"], run)
             return self.run(run["id"], progress)
-        return self.jobs.submit_task("automation", execute,
-                                    key={"resume": identifier} if identifier else {"config": config, "after_import": after_import})
+        return self.jobs.submit_task("automation", execute, key=key)
 
-    def enrich(self, provider, auto_apply):
+    def import_steps(self):
+        """The steps last chosen to follow an import. Until someone chooses there, an old "after import" setting carries
+        over the steps that still apply."""
+        value = self.store.cached("automation:import")
+        if value:
+            return [step for step in value["data"]["steps"] if step in IMPORT_STEPS]
+        old = self.store.cached("automation:config")
+        return [step for step in IMPORT_STEPS if step in old["data"]["steps"]] if old and old["data"].get("post_import") else []
+
+    def import_options(self):
+        """Each step that may follow an import, and why it cannot be chosen when it cannot."""
+        enrichment, settings = self.services["enrichment"], self.settings
+        reasons = {"scan": "" if settings.komga_url and settings.path_mappings and not settings.demo
+                           else "Komgaの接続先とパス対応を設定すると選べます。",
+                   "bibliography": "" if any(enrichment.status(key)["configured"] for key in ("rakuten_books", "rakuten_kobo", "mangaupdates"))
+                                   else "情報源（楽天Books・Kobo・MangaUpdates）を有効にすると選べます。",
+                   "classification": "" if enrichment.status("anilist")["configured"] else "情報源のAniListを有効にすると選べます。"}
+        chosen = self.import_steps()
+        return [{"key": key, "label": label, "reason": reasons[key], "checked": key in chosen and not reasons[key]}
+                for key, label in IMPORT_STEPS.items()]
+
+    def choose_import(self, steps):
+        """Remembers the steps to follow an import, and returns them in run order."""
+        options = {option["key"]: option for option in self.import_options()}
+        if (not isinstance(steps, list) or any(not isinstance(step, str) for step in steps) or len(set(steps)) != len(steps)
+                or set(steps) - IMPORT_STEPS.keys()):
+            raise ConfigError("整理の後に続けて行う処理を選び直してください。")
+        unavailable = [options[step]["reason"] for step in steps if options[step]["reason"]]
+        if unavailable:
+            raise ConfigError(unavailable[0])
+        ordered = [step for step in IMPORT_STEPS if step in steps]
+        self.store.cache("automation:import", {"steps": ordered})
+        return ordered
+
+    def enrich(self, provider, auto_apply, scope=None):
         metadata = self.services["metadata"]
         enrichment = self.services["auto_enrichment"]
-        ids = [row.id for row in metadata.library.scan().series]
+        ids = [row.id for row in metadata.library.scan().series if scope is None or row.id in scope]
         results = []
         for start in range(0, len(ids), 60):
             identifier = self.store.create_job("enrichment")
@@ -102,7 +149,8 @@ class Automation:
         return {"provider": provider, "batches": results}
 
     def step(self, key, config):
-        services, auto_apply = self.services, config["auto_apply"]
+        # A run after an import covers only the series it placed; a daily run covers the whole library.
+        services, auto_apply, scope = self.services, config["auto_apply"], config.get("series")
         if auto_apply and (not self.settings.execution_enabled or not self.settings.web_execution_enabled or self.settings.demo):
             raise ConfigError("自動反映の実行設定が無効になっています。")
         if key == "scan":
@@ -126,7 +174,7 @@ class Automation:
             scanned = services["metadata"].library.scan(refresh=True, reuse_metadata=True)
             if scanned.truncated or scanned.warnings:
                 raise ConfigError("取り込み対象を全件確認できません。保存先とスキャン上限を確認してください。")
-            expected = {book.path: book.size for row in scanned.series for book in row.books}
+            expected = {book.path: book.size for row in scanned.series if scope is None or row.id in scope for book in row.books}
             deadline, stable = time.monotonic() + 90, 0
             while time.monotonic() < deadline:
                 active = {}
@@ -157,13 +205,13 @@ class Automation:
                     if previous["status"] not in {"completed", "restored"}:
                         raise StateConflict("中断したKomga反映が残っています。下の操作リンクから確認・実行または復元してから再開してください。")
             providers = [provider for provider in ("rakuten_books", "rakuten_kobo", "mangaupdates") if services["enrichment"].status(provider)["configured"]] if key == "bibliography" else ["anilist"]
-            results = [self.enrich(provider, auto_apply) for provider in providers if services["enrichment"].status(provider)["configured"]]
+            results = [self.enrich(provider, auto_apply, scope) for provider in providers if services["enrichment"].status(provider)["configured"]]
             if auto_apply and self.settings.komga_url:
                 from .komga_batch import KomgaBatchService
                 batch = KomgaBatchService(self.settings, self.store, services["komga"])
                 for mode in ("metadata", "authors") if key == "bibliography" else ("metadata",):
                     try:
-                        operation = batch.prepare(mode, **({"fields": ["reading", "publisher", "summary", "genres", "tags"]} if mode == "metadata" else {}))
+                        operation = batch.prepare(mode, scope, **({"fields": ["reading", "publisher", "summary", "genres", "tags"]} if mode == "metadata" else {}))
                     except ConfigError as error:
                         if not str(error).startswith("Komgaへ反映する変更はありません。"):
                             raise
@@ -202,7 +250,7 @@ class Automation:
                     run["steps"][key] = {"status": "running", "updated": timestamp()}
                     self.store.cache("automation:run:" + identifier, run)
                     try:
-                        result = self.step(key, {**run["config"], "run_id": identifier})
+                        result = self.step(key, {**run["config"], "run_id": identifier, "series": run.get("series")})
                         run["steps"][key] = {"status": "completed", "result": result, "updated": timestamp()}
                     except (ConfigError, CatalogError, KomgaError, StateConflict) as error:
                         run["steps"][key] = {"status": "failed", "error": str(error), "updated": timestamp()}

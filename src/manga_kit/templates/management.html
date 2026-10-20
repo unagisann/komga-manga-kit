@@ -26,7 +26,6 @@
   <div class="management-group-head"><h2 id="group-{{ loop.index }}">{{ group }}</h2><p>{{ description }}</p></div>
   <div class="management-grid">
     {% for endpoint, title, text, icon in tasks %}<a class="panel management-card" href="{{ url_for(endpoint) }}"><span class="quick-icon">{{ ui.icon(icon, 24) }}</span><h3>{{ title }}</h3><p>{{ text }}</p>{% if endpoint in status %}{{ task_state(status[endpoint]) }}{% endif %}<span class="text-link">開く {{ ui.icon('arrow', 17) }}</span></a>{% endfor %}
-    {% if loop.first %}<div class="panel management-card"><span class="quick-icon">{{ ui.icon('search', 24) }}</span><h3>蔵書を再スキャン</h3><p>ファイルを直接追加・削除したときに、蔵書の一覧を読み直します。書庫は変更しません。</p>{{ task_state(status['refresh-library']) }}<button class="button" id="refresh-library" type="button">{{ ui.icon('refresh', 16) }}読み直す</button></div>{% endif %}
   </div>
 </section>
 {% endfor %}

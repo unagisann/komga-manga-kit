@@ -1953,6 +1953,8 @@ td strong {
 
 /* Library browser: the existing Tools layout with filter chips and a cover grid. */
 .tool-head { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-top:46px; }
+.library-refresh { display:grid; justify-items:end; gap:4px; max-width:260px; text-align:right; }
+.library-refresh small { color:var(--muted); font-size:11px; line-height:1.6; }
 .tool-title { display:flex; align-items:center; gap:10px; font-size:32px; line-height:1.2; letter-spacing:-.025em; }
 .tool-title .icon { color:var(--accent); }
 .tool-head .button { flex-shrink:0; }

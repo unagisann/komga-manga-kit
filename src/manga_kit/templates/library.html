@@ -8,7 +8,7 @@
 {% block content %}
 <div class="tool-head">
   <h1 class="tool-title">{{ ui.icon('search', 25) }}ライブラリ探索</h1>
-  <button class="button" id="refresh-library" type="button">{{ ui.icon('refresh', 16) }}読み直す</button>
+  <div class="library-refresh"><button class="button" id="refresh-library" type="button" aria-describedby="refresh-library-hint">{{ ui.icon('refresh', 16) }}読み直す</button><small id="refresh-library-hint">ファイルを直接追加・削除したとき、すぐ一覧へ反映します。普段は自動で読み直します。</small></div>
 </div>
 <p class="tool-lead">蔵書 <strong>{{ facets.total }}</strong> シリーズ（メタデータ取得済み {{ facets.with_metadata }}）を <strong>読者層・出版社・年代・評価</strong> で絞り込めます。</p>
 {{ ui.scan_notice(scan) }}

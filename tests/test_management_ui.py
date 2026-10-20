@@ -65,7 +65,9 @@ class ManagementUITests(unittest.TestCase):
         body = html.split('aria-label="管理の切り替え">')[1].split('</nav>', 1)[1]
         for href in ('/normalize', '/metadata', '/manage/metadata', '/ai', '/pages', '/moves', '/komga-sync', '/smart-shelves'):
             self.assertIn('href="' + href + '"', body)
-        self.assertIn('id="refresh-library"', body)
+        # Reading the library again lives where its result shows, not among the tasks.
+        self.assertNotIn('id="refresh-library"', body)
+        self.assertIn('id="refresh-library"', self.client.get('/library').get_data(as_text=True))
         for href in ('/settings', '/organize', '/jobs', '/automation'):
             self.assertNotIn('href="' + href + '"', body.split('<footer')[0])
         history = self.client.get('/jobs').get_data(as_text=True)

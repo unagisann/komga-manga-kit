@@ -74,7 +74,7 @@ class MoveTests(unittest.TestCase):
         automation = self.app.extensions['automation']
         for steps, expected in ((['reading', 'inventory'], ['inventory']), (['reading'], ['inventory'])):
             with self.subTest(steps=steps):
-                store.cache('automation:config', {'enabled': False, 'time': '04:00', 'steps': steps, 'post_import': False, 'auto_apply': False})
+                store.cache('automation:config', {'enabled': False, 'time': '04:00', 'steps': steps, 'auto_apply': False})
                 self.assertEqual(automation.config()['steps'], expected)
 
 
