@@ -1,11 +1,16 @@
 {% extends 'base.html' %}{% import 'components.html' as ui %}
 {% block title %}メンテナンス{% endblock %}
 {% block content %}
+{#- How a task stands: waiting or running, what is left to do, and when it last ran. -#}
+{% macro task_state(state) %}<p class="management-state">
+  {%- if state.active %}<span class="chip ongoing">{{ '順番待ち' if state.active.status == 'queued' else '処理中' }}</span>{% elif state.pending %}<span class="chip unknown">{{ state.pending }}</span>{% endif -%}
+  {%- if state.last %}<span>前回 <time class="local-time" datetime="{{ state.last.updated }}">{{ state.last.updated[:16]|replace('T', ' ') }}</time>{% if state.last.status != 'succeeded' %}・{{ job_status_labels[state.last.status] }}{% endif %}</span>{% elif not state.active %}<span>まだ実行していません</span>{% endif -%}
+</p>{% endmacro %}
 <div class="page-heading"><div><p class="eyebrow">MAINTENANCE</p><h1>メンテナンス</h1><p>蔵書のファイルと作品情報を整えます。どの処理も、変更内容を確認してから実行し、処理履歴から復元できます。</p></div></div>
 {#- 実行する処理だけを、作業の順番に並べる。設定は「環境設定」、記録は「処理履歴」のタブにある。 -#}
 {% for group, description, tasks in [
   ('取り込み', '作品フォルダへ漫画を追加したら、ここから始めます。', [
-    ('normalize.index', '追加した漫画をノーマライズ', '追加・変更された書庫の差分を確認し、CBZ化・ページ順・名前と配置を整えます。', 'refresh')]),
+    ('normalize.index', '追加した漫画を整理', '追加・変更された書庫の差分を確認し、CBZ化・ページ順・名前と配置を整えます。', 'refresh')]),
   ('作品情報', '読み・著者・あらすじなどを補い、誤りを直します。', [
     ('metadata.index', '補完・個別確認', '不足している読み・著者・出版社などを取得して確認します。', 'tag'),
     ('management.metadata', '手動修正', '自動補完で取得できなかった項目や、誤った作品情報を修正します。', 'tag'),
@@ -20,8 +25,8 @@
 <section class="management-group" aria-labelledby="group-{{ loop.index }}">
   <div class="management-group-head"><h2 id="group-{{ loop.index }}">{{ group }}</h2><p>{{ description }}</p></div>
   <div class="management-grid">
-    {% for endpoint, title, text, icon in tasks %}<a class="panel management-card" href="{{ url_for(endpoint) }}"><span class="quick-icon">{{ ui.icon(icon, 24) }}</span><h3>{{ title }}</h3><p>{{ text }}</p><span class="text-link">開く {{ ui.icon('arrow', 17) }}</span></a>{% endfor %}
-    {% if loop.first %}<div class="panel management-card"><span class="quick-icon">{{ ui.icon('search', 24) }}</span><h3>蔵書を再スキャン</h3><p>ファイルを直接追加・削除したときに、蔵書の一覧を読み直します。書庫は変更しません。</p><button class="button" id="refresh-library" type="button">{{ ui.icon('refresh', 16) }}読み直す</button></div>{% endif %}
+    {% for endpoint, title, text, icon in tasks %}<a class="panel management-card" href="{{ url_for(endpoint) }}"><span class="quick-icon">{{ ui.icon(icon, 24) }}</span><h3>{{ title }}</h3><p>{{ text }}</p>{% if endpoint in status %}{{ task_state(status[endpoint]) }}{% endif %}<span class="text-link">開く {{ ui.icon('arrow', 17) }}</span></a>{% endfor %}
+    {% if loop.first %}<div class="panel management-card"><span class="quick-icon">{{ ui.icon('search', 24) }}</span><h3>蔵書を再スキャン</h3><p>ファイルを直接追加・削除したときに、蔵書の一覧を読み直します。書庫は変更しません。</p>{{ task_state(status['refresh-library']) }}<button class="button" id="refresh-library" type="button">{{ ui.icon('refresh', 16) }}読み直す</button></div>{% endif %}
   </div>
 </section>
 {% endfor %}

@@ -189,6 +189,11 @@ class LibraryService:
             self._lock.release()
         return self._with_edits(result, edited)
 
+    def snapshot(self):
+        """The last scan with edits applied, or None before the first one. Never starts a scan."""
+        cache = self._cache
+        return self._with_edits(cache, True) if cache is not None else None
+
     def _with_edits(self, result, edited):
         if edited and self.store is not None:
             from .metadata import apply_edits

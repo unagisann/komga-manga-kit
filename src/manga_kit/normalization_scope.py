@@ -57,7 +57,7 @@ class NormalizationTargets:
     def resolve(self, options=None):
         options = {} if options is None else options
         if not isinstance(options, dict) or set(options) - {"library", "subpath", "limit", "recheck"}:
-            raise ConfigError("ノーマライズの対象設定を確認してください。")
+            raise ConfigError("取り込み整理の対象設定を確認してください。")
         identifier, subpath = options.get("library", "all"), options.get("subpath", "")
         if not isinstance(identifier, str) or not isinstance(subpath, str) or len(subpath) > 1000:
             raise ConfigError("ライブラリとサブパスを確認してください。")

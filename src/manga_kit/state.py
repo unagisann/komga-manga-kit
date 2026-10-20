@@ -427,6 +427,25 @@ class StateStore:
             connection.executemany("DELETE FROM normalization_files WHERE namespace=? AND path=?",
                                    [(self.namespace, path) for path in removed])
 
+    def last_run(self, kinds, operation=None):
+        """The newest finished job of these kinds, and one still waiting or running, without their results.
+        Kinds that several operations share count only finished jobs whose result names the operation; a waiting
+        or running one has no result yet, so none is reported for them."""
+        marks = ",".join("?" * len(kinds))
+        named, values = (" AND json_extract(result,'$.kind')=?", [operation]) if operation else ("", [])
+        with self.connection() as conn:
+            last = conn.execute("SELECT id,kind,status,current,total,created,updated,error,json_extract(result,'$.counts') AS counts "
+                                f"FROM jobs WHERE namespace=? AND kind IN ({marks}) AND status NOT IN ('queued','running'){named} "
+                                "ORDER BY created DESC,id DESC LIMIT 1", (self.namespace, *kinds, *values)).fetchone()
+            active = None if operation else conn.execute(
+                "SELECT id,kind,status,current,total,created,updated,error FROM jobs "
+                f"WHERE namespace=? AND kind IN ({marks}) AND status IN ('queued','running') ORDER BY created LIMIT 1",
+                (self.namespace, *kinds)).fetchone()
+        result = {"last": self._job(last) if last else None, "active": self._job(active) if active else None}
+        if last and last["counts"]:
+            result["last"]["counts"] = json.loads(last["counts"])
+        return result
+
     def latest_normalization(self):
         with self.connection() as connection:
             row = connection.execute("SELECT * FROM jobs WHERE namespace=? AND kind='normalization_check' "

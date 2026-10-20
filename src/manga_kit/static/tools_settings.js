@@ -24,10 +24,35 @@
     event.preventDefault(); event.returnValue = '';
   });
 
+  // Sections and the side contents stop below the sticky header, whose height changes as its menu wraps.
+  const appHeader = document.querySelector('.app-header');
+  if (appHeader && 'ResizeObserver' in window) new ResizeObserver(() => document.documentElement.style.setProperty('--header-height', appHeader.offsetHeight + 'px')).observe(appHeader);
+  // The contents always mark one section: the last whose top has passed the upper part of the screen, the first
+  // at the top of the page, the last at its end, and the one just chosen while it is still in view.
+  const contents = document.querySelector('.settings-toc');
+  if (contents) {
+    const links = [...contents.querySelectorAll('a')].map(link => [link, document.getElementById(link.hash.slice(1))]).filter(([, section]) => section);
+    let chosen = null, frame = 0;
+    const mark = current => links.forEach(([link]) => link === current ? link.setAttribute('aria-current', 'true') : link.removeAttribute('aria-current'));
+    const spy = () => {
+      frame = 0;
+      const line = (appHeader?.offsetHeight || 0) + innerHeight * .25, top = chosen?.[1].getBoundingClientRect().top;
+      if (chosen && top >= 0 && top < innerHeight * .6) return mark(chosen[0]);
+      chosen = null;
+      const end = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
+      mark((end ? links.at(-1) : links.findLast(([, section]) => section.getBoundingClientRect().top <= line) || links[0])[0]);
+    };
+    const later = () => { frame ||= requestAnimationFrame(spy); };
+    contents.addEventListener('click', event => { chosen = links.find(([link]) => link === event.target.closest('a')) || null; later(); });
+    addEventListener('scroll', later, {passive:true}); addEventListener('resize', later);
+    spy();
+  }
+
   const form = document.querySelector('#tools-settings');
   if (form) {
     const status = document.querySelector('#tool-status'), revert = document.querySelector('#tools-revert');
     const refresh = () => {
+      form.querySelectorAll('[data-when]').forEach(part => { part.hidden = !part.dataset.when.split(' ').some(name => form.elements[name].checked); });
       const dirty = edited(form);
       if (dirty || form.classList.contains('is-dirty')) say(status, dirty ? '未保存の変更があります。' : '');
       form.classList.toggle('is-dirty', dirty); revert.disabled = !dirty;

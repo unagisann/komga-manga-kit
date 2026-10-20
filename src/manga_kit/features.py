@@ -100,8 +100,8 @@ def built_in_features() -> list[Feature]:
                 PortalLink("moves", "書籍移動", "maintenance.moves", "folder", "整理ルールの場所と違う作品を、衝突を確認して移す", shown=False),
                 PortalLink("automation", "自動更新", "maintenance.automation", "clock", "情報源の更新と取り込み後の処理を毎日実行", shown=False),
             )),
-            Feature("normalize", "ノーマライズ", "normalize.index", "refresh", normalize, parent="management", navigation=(
-                NavigationItem("ノーマライズ", "normalize.index", "refresh", shown=False),
+            Feature("normalize", "取り込み整理", "normalize.index", "refresh", normalize, parent="management", navigation=(
+                NavigationItem("取り込み整理", "normalize.index", "refresh", shown=False),
             ), portal=(
                 PortalLink("normalize", "追加した漫画を整理", "normalize.index", "refresh", "CBZ化・ページ順・名前と配置をまとめて整える"),)),
             Feature("management", "管理", "management.index", "sliders", management, portal=(

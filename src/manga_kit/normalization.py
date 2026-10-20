@@ -128,8 +128,8 @@ class NormalizationOperations(OperationService):
             except Exception as error:
                 operation["status"] = "failed"
                 self._save(operation)
-                self.store.update_job(job_id, status="failed", error="ノーマライズが中断しました。操作記録から復元できます。")
-                raise StateConflict("ノーマライズを完了できませんでした。同じ操作の復元を実行してください。") from error
+                self.store.update_job(job_id, status="failed", error="取り込み整理が中断しました。操作記録から復元できます。")
+                raise StateConflict("取り込み整理を完了できませんでした。同じ操作の復元を実行してください。") from error
 
     def restore(self, operation_id, confirmation):
         operation = self.inspect(operation_id)
@@ -318,7 +318,7 @@ class NormalizationService:
             if result["counts"]["blocked"] or result["warnings"] or result["truncated"] or result["limit_reached"] or result["preparation_error"]:
                 reason = "要確認項目または確認上限があるため、自動実行せず差分を表示しています。"
             elif not result["counts"]["ready"]:
-                reason = "ノーマライズが必要な追加・変更はありません。"
+                reason = "整理が必要な追加・変更はありません。"
             elif not result["operation_id"]:
                 reason = "実行できる計画を準備できませんでした。差分を確認してください。"
             result.update(auto_execute=True, auto_stop_reason=reason)
@@ -362,7 +362,7 @@ class NormalizationService:
             try:
                 output["post_import_job"] = self.after_execute()
             except (ConfigError, StateConflict):
-                output["post_import_error"] = "ノーマライズは完了しました。取り込み後の処理は管理の自動更新から実行してください。"
+                output["post_import_error"] = "取り込み整理は完了しました。取り込み後の処理は管理の自動更新から実行してください。"
         return output
 
     def submit_action(self, job_id, confirmation, *, restore=False):

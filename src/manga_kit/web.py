@@ -378,9 +378,37 @@ def metadata_index():
                            saved=store.operation_edits(batch_id, "enrichment") if batch else None)
 
 
+# The job kinds each maintenance card runs. Moves and Komga updates share kinds; the operation in the result tells them apart.
+MAINTENANCE_RUNS = {"normalize.index": (("normalization_check", "normalization_execute", "normalization_restore"), None),
+                    "refresh-library": (("scan", "scan_refresh"), None),
+                    "metadata.index": (("enrichment",), None),
+                    "maintenance.ai": (("ai_generate",), None),
+                    "maintenance.page_books": (("cover_screening", "pages_execute", "pages_restore"), None),
+                    "maintenance.moves": (("maintenance_execute", "maintenance_restore"), "move"),
+                    "maintenance.komga_sync": (("maintenance_execute", "maintenance_restore"), "komga"),
+                    "maintenance.shelves": (("shelf_execute", "shelf_restore"), None)}
+
+
 @management.get("/manage", endpoint="index")
 def management_index():
-    return render_template("management.html")
+    """Each task with when it last ran and what is left to do. Only saved results are read: opening the page
+    never scans the library or contacts anything."""
+    from .tools_admin import cover_todo
+    store = current_app.extensions["state"]
+    status = {endpoint: store.last_run(kinds, operation) for endpoint, (kinds, operation) in MAINTENANCE_RUNS.items()}
+    check, executed = store.last_run(("normalization_check",))["last"], store.last_run(("normalization_execute",))["last"]
+    counts = check.get("counts") if check and check["status"] == "succeeded" else None
+    if (counts and counts["ready"] + counts["blocked"]
+            and not (executed and executed["status"] == "succeeded" and executed["created"] > check["created"])):
+        status["normalize.index"]["pending"] = f"未実行の差分 {counts['ready'] + counts['blocked']}件"
+    library = current_app.extensions["library"].snapshot()
+    missing = sum(bool(missing_fields(series.to_dict(), "rakuten_books")) for series in library.series) if library else 0
+    if missing:
+        status["metadata.index"]["pending"] = f"情報が不足 {missing}作品"
+    covers = cover_todo()
+    if covers:
+        status["maintenance.page_books"]["pending"] = f"要確認 {covers}冊"
+    return render_template("management.html", status=status)
 
 
 @management.get("/manage/metadata", endpoint="metadata")

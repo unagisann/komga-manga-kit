@@ -194,7 +194,7 @@ class Settings:
         if type(self.web_execution_enabled) is not bool:
             raise ConfigError("execution.web_enabled は true / false で指定してください。")
         if self.web_execution_enabled and not self.execution_enabled:
-            raise ConfigError("Webのノーマライズには execution.enabled: true も設定してください。")
+            raise ConfigError("Webで取り込み整理を実行するには execution.enabled: true も設定してください。")
         library, data = self.library_root.resolve(), self.data_root.resolve()
         if self.tools.credentials_file:
             credentials = Path(self.tools.credentials_file).expanduser()

@@ -12,7 +12,7 @@ YAMLは安全なローダーで読み、未知の設定項目・変数・階層�
 | `library.max_files` | スキャン上限。既定50000、最大100000。冊数が上限の90%を超えると警告する |
 | `data.root` | 編集・処理履歴の保存先。既定 `./var/state`、設定ファイル基準 |
 | `execution.enabled` | 整理実行・復元・CBZ生成/取り消し・Komga情報の反映・復元を有効化。既定false |
-| `execution.web_enabled` | Webの確認付きノーマライズ実行・復元。既定false。enabledもtrueが必要。リモート実行は管理者認証が必要 |
+| `execution.web_enabled` | Webの確認付き取り込み整理の実行・復元。既定false。enabledもtrueが必要。リモート実行は管理者認証が必要 |
 | `layout.status_folders` | 連載中・完結・未分類のフォルダ名 |
 | `layout.series` | 作品フォルダ名 |
 | `layout.book` | 巻ファイル名。拡張子の変数は必須 |
@@ -115,7 +115,7 @@ EPUBではcontainer.xmlからOPFを特定し、`group-position` を巻数とし�
 メタデータの読み取りは1回あたり合計256KiBまで。
 
 UIのルール変更は一時プレビュー。適用する設定はYAMLへ保存して再起動する。
-ノーマライズの実行は起動時のルールを使う。[ノーマライズガイド](NORMALIZATION.md) を参照。
+取り込み整理の実行は起動時のルールを使う。[取り込み整理ガイド](NORMALIZATION.md) を参照。
 
 ## 手動編集と実行データ
 

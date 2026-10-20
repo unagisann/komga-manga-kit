@@ -2021,16 +2021,34 @@ td strong {
 .management-group-head h2 { font-size:19px; }
 .management-group-head p { color:var(--muted); font-size:13px; }
 .management-card .button { margin-top:14px; }
+.management-card .management-state { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin:8px 0 14px; font-size:12px; line-height:1.6; }
 
 /* Settings: one page, sections with anchors, and a save bar for the shared form. */
 .settings-toc { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
-.settings-toc a { padding:5px 10px; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:12px; }
+.settings-toc a { display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:12px; }
+.settings-toc .icon { flex-shrink:0; }
+.settings-toc-title { display:none; }
 .settings-toc a:hover { border-color:var(--accent); color:var(--accent); }
-.settings-block { scroll-margin-top:90px; }
+.settings-toc a[aria-current] { border-color:transparent; background:var(--accent-soft); color:var(--accent); font-weight:600; }
+.settings-block { scroll-margin-top:calc(var(--header-height, 74px) + 16px); }
+/* Wide screens keep the contents beside the sections; narrow ones keep them as a row above. */
+@media (min-width:1080px) {
+  .settings-layout { display:grid; grid-template-columns:176px minmax(0, 1fr); gap:28px; align-items:start; }
+  .settings-toc { position:sticky; top:calc(var(--header-height, 74px) + 16px); flex-direction:column; flex-wrap:nowrap; gap:2px; margin:28px 0 0; border-left:1px solid var(--border); }
+  .settings-toc-title { display:block; margin:0 0 8px; padding:2px 0 0 14px; color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.08em; }
+  .settings-toc a { gap:10px; margin-left:-1px; padding:8px 12px 8px 13px; border:0; border-left:2px solid transparent; border-radius:0 8px 8px 0; font-size:13px; }
+  .settings-toc a:hover { border-left-color:var(--muted); background:var(--surface-raised); color:var(--text); }
+  .settings-toc a[aria-current] { border-left-color:var(--accent); background:var(--accent-soft); color:var(--accent); }
+}
+.setting-rows { margin:14px 0; border:1px solid var(--border); border-radius:var(--radius-sm); }
+.setting-row { display:flex; align-items:center; gap:12px; padding:11px 14px; border-bottom:1px solid var(--border); cursor:pointer; }
+.setting-row:last-child { border-bottom:0; }
+.setting-row > span { display:grid; gap:2px; min-width:0; }
+.setting-row strong { font-size:14px; font-weight:600; }
+.setting-row small { color:var(--muted); font-size:12px; }
+.setting-row input { flex-shrink:0; width:18px; height:18px; accent-color:var(--accent); }
 .settings-block h3 { margin:22px 0 8px; font-size:15px; }
 .settings-block > .button { margin-top:12px; }
-.settings-checks { display:flex; flex-wrap:wrap; gap:10px 22px; margin:14px 0; }
-.settings-checks label { display:inline-flex; align-items:center; gap:8px; }
 .settings-save { position:sticky; bottom:0; z-index:5; display:flex; align-items:center; justify-content:flex-end; gap:14px; margin-top:16px; padding:12px 16px; border:1px solid var(--border); border-radius:var(--radius); background:color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter:blur(6px); }
 .settings-save .form-hint { margin-right:auto; }
 .settings-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:10px; margin-top:16px; }

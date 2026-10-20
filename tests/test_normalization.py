@@ -205,7 +205,7 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(self.files(), before)
         html = self.client.get('/normalize?check=' + checked['id'] + '&action=' + automatic['id']).get_data(as_text=True)
         self.assertIn('対象は2冊で、確認上限1冊', html)
-        self.assertNotIn('ノーマライズが必要な追加・変更はありません。', html)
+        self.assertNotIn('整理が必要な追加・変更はありません。', html)
         self.assertIn('差分を確認', self.client.get('/jobs/' + automatic['id']).get_data(as_text=True))
 
     def test_auto_execution_uses_the_checked_plan_and_can_be_restored(self):

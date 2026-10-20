@@ -98,7 +98,7 @@ def execute(owner, identifier, confirmation):
     supported(owner)
     operation = owner.inspect(identifier)
     if operation["status"] != "planned":
-        raise StateConflict("未実行のノーマライズ計画を確認してください。")
+        raise StateConflict("未実行の取り込み整理の計画を確認してください。")
     # This stage leaves every byte unchanged. Komga can transfer all users'
     # progress through its native hash-based restoration before hashes change.
     operation = OperationService.execute(owner, identifier, confirmation)

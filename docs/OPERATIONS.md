@@ -24,7 +24,7 @@ wheel自体に設定例・運用手順・バージョン固定ファイルは含
 実ライブラリでは、コード外の設定ファイルへ `app.demo: false`、`library.root`、`data.root` を設定する。
 両ルートに絶対パスを使うと更新時の取り違えを防げる。`execution.enabled` は通常 `false` のままにする。
 設定の詳細は [設定ガイド](CONFIGURATION.md)、書き込みを行う場合は各操作ガイドの条件と確認値を使う。
-追加した漫画をWebでノーマライズする場合は、[ノーマライズガイド](NORMALIZATION.md) に従い `execution.web_enabled` も有効にする。
+追加した漫画をWebで整理（取り込み整理）する場合は、[取り込み整理ガイド](NORMALIZATION.md) に従い `execution.web_enabled` も有効にする。
 
 ## Composeで新規導入
 

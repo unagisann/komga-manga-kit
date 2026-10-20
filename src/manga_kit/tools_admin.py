@@ -122,6 +122,15 @@ def ai_action(identifier, action):
 MARK_STATES = {"done": "done", "hold": "skip"}
 
 
+def cover_todo():
+    """Books the screening flagged and nobody has marked done or on hold, as the cover list counts them."""
+    from .covers import BUCKETS
+    verdicts = current_app.extensions["covers"].results()["books"]
+    marks = {key.removeprefix("pages:mark:"): value["data"].get("status")
+             for key, value in current_app.extensions["state"].cached_prefix("pages:mark:").items()}
+    return sum(verdict.get("bucket") in BUCKETS and marks.get(book) not in MARK_STATES for book, verdict in verdicts.items())
+
+
 @maintenance.get("/pages")
 def page_books():
     """The existing Tools cover list: screening groups, review state, search and 100 books a page."""

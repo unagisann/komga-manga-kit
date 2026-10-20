@@ -9,7 +9,11 @@
   <small class="field-hint">{% if source == 'env' %}環境変数 <code>{{ name }}</code> の値を使います。Webで保存した値より優先します。{% elif preferences.credential_file_enabled %}環境変数 <code>{{ name }}</code> でも設定できます。空欄のままなら変更しません。{% else %}環境変数 <code>{{ name }}</code> で設定します。Webで登録するには、設定ファイルの <code>tools.credentials_file</code> に保存先を指定します。{% endif %}</small></label>
 {%- endmacro %}
 <div class="page-heading"><div><p class="eyebrow">SETTINGS</p><h1>環境設定</h1><p>Webで変えられる設定と、設定ファイルで決める項目をまとめています。Webで保存した設定は再起動しなくても反映されます。</p></div></div>
-<nav class="settings-toc" aria-label="設定の項目">{% for anchor, label in [('display', '表示するメニュー'), ('komga', 'Komga'), ('sources', '情報源'), ('ai', 'AI補助'), ('notify', '新刊通知'), ('config', '設定ファイルで決める項目')] %}<a href="#{{ anchor }}">{{ label }}</a>{% endfor %}</nav>
+{#- A switch with what it is for, in a list of rows. -#}
+{% macro setting_row(name, label, use, checked) %}<label class="setting-row"><input name="{{ name }}" type="checkbox"{% if checked %} checked{% endif %}><span><strong>{{ label }}</strong><small>{{ use }}</small></span></label>{% endmacro %}
+<div class="settings-layout">
+<nav class="settings-toc" aria-labelledby="settings-toc-title"><p class="settings-toc-title" id="settings-toc-title">設定の項目</p>{% for anchor, label, icon in [('display', '表示するメニュー', 'grid'), ('komga', 'Komga', 'plug'), ('sources', '情報源', 'book'), ('topics', '話題の取得', 'compass'), ('ai', 'AI補助', 'tag'), ('notify', '新刊通知', 'square-plus'), ('config', '設定ファイル', 'folder')] %}<a href="#{{ anchor }}"{% if loop.first %} aria-current="true"{% endif %}>{{ ui.icon(icon, 15) }}<span>{{ label }}</span></a>{% endfor %}</nav>
+<div class="settings-main">
 
 <section class="panel section settings-block" id="display" aria-labelledby="display-title">
   <div class="panel-heading"><h2 id="display-title">表示するメニュー</h2></div>
@@ -47,25 +51,39 @@
 
 <section class="panel section settings-block" id="sources" aria-labelledby="sources-title">
   <div class="panel-heading"><h2 id="sources-title">情報源</h2><span class="chip" id="rakuten-state"{% if not settings.demo %} data-keys="{{ settings.rakuten.application_id_env }} {{ settings.rakuten.access_key_env }}"{% endif %}>{{ '架空データでお試し' if settings.demo else '楽天Books: ' ~ ('設定済み' if catalog.configured else '未設定') }}</span></div>
-  <p class="muted">有効にした情報源だけを、更新操作や自動更新で使います。ページを開いただけでは通信しません。</p>
-  <div class="settings-checks">
-    <label><input name="rakuten_enabled" type="checkbox" {% if preferences.rakuten.enabled %}checked{% endif %}>楽天Books（書誌・新刊）</label>
-    {% for name, label in [('kobo_enabled', '楽天Kobo（電子書籍）'), ('mangaupdates_enabled', 'MangaUpdates')] %}<label><input name="{{ name }}" type="checkbox" {% if preferences.tools[name] %}checked{% endif %}>{{ label }}</label>{% endfor %}
-    <label><input name="anilist_enabled" type="checkbox" {% if preferences.anilist.enabled %}checked{% endif %}>AniList（タグ・ジャンル）</label>
-    {% for name, label in [('anime_enabled', '今期アニメ'), ('discovery_enabled', '漫画の発見'), ('rankings_enabled', '次にくるマンガ大賞')] %}<label><input name="{{ name }}" type="checkbox" {% if preferences.tools[name] %}checked{% endif %}>{{ label }}</label>{% endfor %}
+  <p class="muted">作品情報の補完と新刊チェックで使う取得元です。有効にした取得元だけを、更新操作や自動更新で使います。ページを開いただけでは通信しません。</p>
+  <div class="setting-rows">
+    {{ setting_row('rakuten_enabled', '楽天Books', '紙の本の書誌・新刊', preferences.rakuten.enabled) }}
+    {{ setting_row('kobo_enabled', '楽天Kobo', '電子書籍の書誌・新刊', preferences.tools.kobo_enabled) }}
+    {{ setting_row('mangaupdates_enabled', 'MangaUpdates', '著者・出版社・あらすじ・ジャンル', preferences.tools.mangaupdates_enabled) }}
+    {{ setting_row('anilist_enabled', 'AniList', 'タグ・ジャンル。APIキーは不要です', preferences.anilist.enabled) }}
   </div>
-  <h3>楽天のアプリ</h3>
-  <p class="form-hint">楽天BooksとKoboは同じアプリIDとアクセスキーを使います。AniListはAPIキー不要です。デモ中は架空のデータを使います。</p>
-  <div class="tool-facts">
-    {{ secret_field(settings.rakuten.application_id_env, 'アプリID') }}
-    {{ secret_field(settings.rakuten.access_key_env, 'アクセスキー') }}
-    <label>楽天に登録したオリジン<input name="rakuten_origin" type="url" value="{{ preferences.rakuten.origin }}"></label>
+  {#- Details that only matter while one of the named switches is on fold away while all are off. -#}
+  <div data-when="rakuten_enabled kobo_enabled"{% if not (preferences.rakuten.enabled or preferences.tools.kobo_enabled) %} hidden{% endif %}>
+    <h3>楽天のアプリ</h3>
+    <p class="form-hint">楽天BooksとKoboは同じアプリIDとアクセスキーを使います。デモ中は架空のデータを使います。</p>
+    <div class="tool-facts">
+      {{ secret_field(settings.rakuten.application_id_env, 'アプリID') }}
+      {{ secret_field(settings.rakuten.access_key_env, 'アクセスキー') }}
+      <label>楽天に登録したオリジン<input name="rakuten_origin" type="url" value="{{ preferences.rakuten.origin }}"></label>
+    </div>
+  </div>
+</section>
+
+<section class="panel section settings-block" id="topics" aria-labelledby="topics-title">
+  <div class="panel-heading"><h2 id="topics-title">話題の取得</h2></div>
+  <p class="muted">ポータルの機能で使う記事や一覧を、更新操作や自動更新で取得します。ページを開いただけでは通信しません。</p>
+  <div class="setting-rows">
+    {{ setting_row('anime_enabled', '今期アニメ', '放送中アニメの原作と、蔵書の所持状況', preferences.tools.anime_enabled) }}
+    {{ setting_row('discovery_enabled', '漫画の発見', '紹介記事・マンバ通信・コミックナタリーなど', preferences.tools.discovery_enabled) }}
+    {{ setting_row('rankings_enabled', '次にくるマンガ大賞', '歴代の受賞作・ノミネート作', preferences.tools.rankings_enabled) }}
   </div>
 </section>
 
 <section class="panel section settings-block" id="ai" aria-labelledby="ai-title">
   <div class="panel-heading"><h2 id="ai-title">AI補助</h2></div>
-  <div class="settings-checks"><label><input name="ai_enabled" type="checkbox" {% if preferences.tools.ai_enabled %}checked{% endif %}>AI補助を使う</label></div>
+  <div class="setting-rows">{{ setting_row('ai_enabled', 'AI補助を使う', '読み・あらすじ・読者層の提案。提案は確認してから保存します', preferences.tools.ai_enabled) }}</div>
+  <div data-when="ai_enabled"{% if not preferences.tools.ai_enabled %} hidden{% endif %}>
   <div class="tool-facts">
     <label>AI API方式<select name="ai_provider"><option value="chat" {% if preferences.tools.ai_provider == 'chat' %}selected{% endif %}>Chat Completions互換</option><option value="gemini" {% if preferences.tools.ai_provider == 'gemini' %}selected{% endif %}>Gemini</option></select></label>
     <label>AI APIのベースURL<input name="ai_url" type="url" value="{{ preferences.tools.ai_url }}" placeholder="https://your-provider.example/v1"></label>
@@ -74,14 +92,15 @@
   </div>
   <button type="button" class="button" id="ai-models-refresh">利用できるモデルを確認</button>
   <p id="ai-models-status" class="form-hint" role="status">入力中の方式・URL・APIキーで確かめます。確認だけでは保存しません。</p>
+  </div>
 </section>
 
 <section class="panel section settings-block" id="notify" aria-labelledby="notify-title">
   <div class="panel-heading"><h2 id="notify-title">新刊通知</h2></div>
-  <div class="settings-checks"><label><input name="notify_enabled" type="checkbox" {% if preferences.tools.notify_enabled %}checked{% endif %}>新刊が見つかったら通知する</label></div>
-  <div class="tool-facts">{{ secret_field(settings.tools.notify_url_env, '通知先URL') }}</div>
+  <div class="setting-rows">{{ setting_row('notify_enabled', '新刊が見つかったら通知する', '新刊チェックで見つかった巻を、通知先URLへ送ります', preferences.tools.notify_enabled) }}</div>
+  <div class="tool-facts" data-when="notify_enabled"{% if not preferences.tools.notify_enabled %} hidden{% endif %}>{{ secret_field(settings.tools.notify_url_env, '通知先URL') }}</div>
 </section>
-<div class="settings-save"><p id="tool-status" class="form-hint" role="status" hidden></p><button class="button" type="reset" id="tools-revert" disabled>元に戻す</button><button class="button primary">Komga・情報源・AI・通知を保存</button></div>
+<div class="settings-save"><p id="tool-status" class="form-hint" role="status" hidden></p><button class="button" type="reset" id="tools-revert" disabled>元に戻す</button><button class="button primary">設定を保存</button></div>
 </form>
 
 <section class="panel section settings-block" id="config" aria-labelledby="config-title">
@@ -93,7 +112,7 @@
     <dt>連載中 / 完結 / 未分類</dt><dd>{{ settings.layout.ongoing_folder }} / {{ settings.layout.completed_folder }} / {{ settings.layout.unknown_folder }}</dd>
     <dt>実行データの保存先</dt><dd><code>{{ settings.data_root }}</code></dd>
     <dt>認証情報の保存先</dt><dd>{{ '指定あり（Webで登録できます）' if preferences.credential_file_enabled else '未指定（環境変数だけで設定）' }}</dd>
-    <dt>Webのノーマライズ実行</dt><dd>{{ '有効' if settings.web_execution_enabled and not settings.demo else '無効（プレビュー専用）' }}</dd>
+    <dt>Webでの取り込み整理の実行</dt><dd>{{ '有効' if settings.web_execution_enabled and not settings.demo else '無効（プレビュー専用）' }}</dd>
     <dt>CLIの整理実行</dt><dd>{{ '有効' if settings.execution_enabled else '無効（既定）' }}</dd>
   </dl>
   <a class="button" href="{{ url_for('organize.index') }}">整理ルールを試す {{ ui.icon('arrow', 17) }}</a>
@@ -123,4 +142,6 @@ komga:
     <p class="form-hint">APIキーは設定ファイルに含めず、環境変数か、各項目でWebから登録した値を読み取ります。詳細はプロジェクトのREADMEを参照してください。</p>
   </details>
 </section>
+</div>
+</div>
 {% endblock %}

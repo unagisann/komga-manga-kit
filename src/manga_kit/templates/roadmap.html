@@ -2,9 +2,9 @@
 {% block title %}ロードマップ{% endblock %}
 {% block content %}
 <div class="page-heading"><div><p class="eyebrow">ROADMAP</p><h1>既存Toolsの機能を揃える</h1><p>先に機能を揃え、その後で必要・不要、レイアウト、操作感を整理します。</p></div><span class="badge">未リリース</span></div>
-<div class="notice">ポータルを維持し、追加した漫画の差分確認・ノーマライズを中心に実装しています。既定はプレビュー、各情報源は明示的に有効にします。</div>
+<div class="notice">ポータルを維持し、追加した漫画の差分確認と取り込み整理を中心に実装しています。既定はプレビュー、各情報源は明示的に有効にします。</div>
 <section class="management-grid section">{% for endpoint,title,description in [
-('normalize.index','追加 → 差分確認 → ノーマライズ','CBZ化・ページ順・名前と配置・バックアップと復元。Komga 1.29.1では書庫再生成も既読情報を検証します。'),
+('normalize.index','追加 → 差分確認 → 取り込み整理','CBZ化・ページ順・名前と配置・バックアップと復元。Komga 1.29.1では書庫再生成も既読情報を検証します。'),
 ('metadata.index','自動補完・書誌対応','楽天Books・Kobo・MangaUpdates・AniList。未登録分の対応付け、候補の確認、誤対応の修正。'),
 ('tools.new_volumes','新刊・予約','紙と電子、所持巻との差分、分冊版・関連本の除外、任意の通知。'),
 ('tools.anime','今期アニメ','当季と継続中の作品、漫画原作・漫画版、所持照合と手動修正。'),
@@ -14,7 +14,7 @@
 ('maintenance.moves','書籍移動・Komga反映','整理ルールどおりの場所への移動と、作品情報・タグ・著者・連載状態の反映。'),
 ('maintenance.page_books','表紙・ページ修正','表紙・順序・削除、確認状態、バックアップ・履歴・ゴミ箱。'),
 ('maintenance.ai','AI補助','読み・あらすじ・読者層、根拠・モデル選択、確認・編集・保存と復元。'),
-('maintenance.automation','自動更新・取り込み後処理','時刻とステップ、今すぐ実行、ノーマライズ後の補完、途中からの再開。'),
+('maintenance.automation','自動更新・取り込み後処理','時刻とステップ、今すぐ実行、取り込み整理後の補完、途中からの再開。'),
 ('maintenance.settings','接続・情報源・認証情報','接続先・取得元・AI・アカウント・認証情報の登録と診断。')
 ] %}<a class="panel management-card" href="{{ url_for(endpoint) }}"><h2>{{ title }}</h2><p>{{ description }}</p><span class="text-link">確認する {{ ui.icon('arrow',16) }}</span></a>{% endfor %}</section>
 <section class="panel section"><h2>残る差と未検証の範囲</h2><ul><li>Komga連携中の、ページ数が変わる削除の既読位置移行。</li><li>書籍移動と情報反映は、段階ごとに内容を確認します。</li><li>楽天・AIの認証接続、実作品の照合、Windows実機とPWAの実端末インストール。</li><li>機能の必要性、配置、細かい操作感の見直し。</li></ul><p>詳細はリポジトリの docs/FEATURE_PARITY.md と docs/VALIDATION.md に記録しています。</p></section>

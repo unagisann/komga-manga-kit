@@ -1,5 +1,6 @@
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -72,6 +73,60 @@ class ManagementUITests(unittest.TestCase):
         settings = self.client.get('/settings').get_data(as_text=True)
         for marker in ('id="menu-settings"', 'id="tools-settings"', 'data-credential="KOMGA_API_KEY"', 'id="test-komga"', 'href="/organize"', 'AniList'):
             self.assertIn(marker, settings)
+
+    def cards(self):
+        html = self.client.get('/manage').get_data(as_text=True)
+        return {part.split('</h3>')[0]: part.split('</h3>')[1].split('<span class="text-link">')[0].split('<button')[0]
+                for part in html.split('<h3>')[1:]}
+
+    def test_maintenance_cards_show_saved_progress_without_scanning_on_open(self):
+        store, library = self.app.extensions['state'], self.app.extensions['library']
+        with (patch.object(library, 'scan', side_effect=AssertionError('scan on open')),
+              patch('requests.Session.request', side_effect=AssertionError('network on open'))):
+            cards = self.cards()
+        self.assertIn('まだ実行していません', cards['追加した漫画を整理'])
+        self.assertNotIn('情報が不足', cards['補完・個別確認'])
+        self.assertNotIn('management-state', cards['手動修正'])
+        self.assertEqual(store.jobs(), [])
+        check = store.create_job('normalization_check')
+        store.update_job(check, status='succeeded', result={'items': [], 'counts': {'ready': 3, 'blocked': 1, 'unchanged': 5}})
+        moved = store.create_job('maintenance_execute'); store.update_job(moved, status='failed', result={'kind': 'move'})
+        synced = store.create_job('maintenance_execute'); store.update_job(synced, status='succeeded', result={'kind': 'komga'})
+        enrichment = store.create_job('enrichment'); store.update_job(enrichment, status='running')
+        store.cache('covers:screening', {'books': {'a': {'bucket': 'mono_color'}, 'b': {'bucket': 'ok'}, 'c': {'bucket': 'broken'}}})
+        store.cache('pages:mark:c', {'status': 'done'})
+        library.scan()
+        cards = self.cards()
+        self.assertIn('未実行の差分 4件', cards['追加した漫画を整理'])
+        self.assertIn('処理中', cards['補完・個別確認'])
+        self.assertIn('要確認 1冊', cards['表紙・ページ修正'])
+        self.assertIn('・失敗', cards['書籍移動'])
+        self.assertIn('前回', cards['作品情報をまとめて反映'])
+        self.assertNotIn('・失敗', cards['作品情報をまとめて反映'])
+        self.assertIn('まだ実行していません', cards['スマート本棚の同期'])
+        # Once nothing runs, the missing-field count comes from the last scan, as the enrichment list counts it.
+        store.update_job(enrichment, status='succeeded', result={})
+        self.assertRegex(self.cards()['補完・個別確認'], r'情報が不足 \d+作品')
+        time.sleep(0.01)
+        store.update_job(store.create_job('normalization_execute'), status='succeeded', result={})
+        self.assertNotIn('未実行の差分', self.cards()['追加した漫画を整理'])
+
+    def test_settings_keep_portal_topics_apart_and_fold_what_switches_off(self):
+        def section(name):
+            html = self.client.get('/settings').get_data(as_text=True)
+            return html.split(f'settings-block" id="{name}"')[1].split('</section>')[0]
+        for name in ('anime_enabled', 'discovery_enabled', 'rankings_enabled'):
+            self.assertIn(f'name="{name}"', section('topics'))
+            self.assertNotIn(f'name="{name}"', section('sources'))
+        contents = self.client.get('/settings').get_data(as_text=True).split('class="settings-toc"')[1].split('</nav>')[0]
+        self.assertLess(contents.index('href="#sources"'), contents.index('href="#topics"'))
+        self.assertIn('data-when="rakuten_enabled kobo_enabled" hidden', section('sources'))
+        self.assertIn('data-when="ai_enabled" hidden', section('ai'))
+        self.assertIn('data-when="notify_enabled" hidden', section('notify'))
+        saved = self.client.post('/api/tools/settings', json={'revision': 0, 'tools': {'ai_enabled': True, 'kobo_enabled': True}})
+        self.assertEqual(saved.status_code, 200)
+        self.assertIn('data-when="rakuten_enabled kobo_enabled">', section('sources'))
+        self.assertIn('data-when="ai_enabled">', section('ai'))
 
     def test_header_and_portal_menus_follow_the_saved_order_and_visibility(self):
         view = self.client.get('/settings').get_data(as_text=True)

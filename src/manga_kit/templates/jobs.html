@@ -1,7 +1,7 @@
 {% extends 'base.html' %}{% import 'components.html' as ui %}
 {% block title %}処理履歴{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">HISTORY</p><h1>処理履歴</h1><p>スキャン・ノーマライズ・整理・Komgaへの反映などの進み具合と結果、作品情報の変更を記録します。各処理の詳細から復元できます。</p></div></div>
+<div class="page-heading"><div><p class="eyebrow">HISTORY</p><h1>処理履歴</h1><p>スキャン・取り込み整理・書籍移動・Komgaへの反映などの進み具合と結果、作品情報の変更を記録します。各処理の詳細から復元できます。</p></div></div>
 <section class="panel" id="jobs-panel"><div class="panel-heading"><h2>最近の処理</h2></div>
 <p id="jobs-message" role="status">先頭50件を表示しています。処理中は自動で更新します。</p>
 <div class="table-scroll"><table class="history-table"><thead><tr><th>処理</th><th>状態</th><th>処理数</th><th>開始時刻</th><th>結果</th></tr></thead><tbody id="jobs-table">{% for job in jobs %}<tr><td>{{ job_labels.get(job.kind, job.kind) }}</td><td>{{ ui.job_state(job, job_status_labels) }}</td><td>{{ job.current }}{% if job.total is not none %} / {{ job.total }}{% endif %}</td><td><time class="local-time" datetime="{{ job.created }}">{{ job.created }}</time></td><td><a href="{{ url_for('jobs.detail', job_id=job.id) }}">詳細を見る</a></td></tr>{% else %}<tr><td colspan="5">まだ処理の記録はありません。</td></tr>{% endfor %}</tbody></table></div></section>
