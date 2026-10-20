@@ -40,6 +40,25 @@ class ToolFixture:
 
 
 class ToolOperationsTests(ToolFixture, unittest.TestCase):
+    def test_saved_ai_fields_offer_scoped_komga_sync_without_remote_writes(self):
+        self.app.extensions['preferences']._current = replace(self.settings, komga_url='http://isolated.invalid')
+        metadata = self.app.extensions['metadata']
+        current = metadata.inspect(self.row['local_id'])
+        identifier = 'a' * 32
+        self.store.cache('ai:proposal:' + identifier, {
+            'id': identifier, 'series_id': self.row['local_id'], 'digest': 'confirmed-proposal',
+            'fields': {'reading': 'かくうのさくひん', 'summary': 'AIの候補'},
+            'expected': {'fields': {}, 'revision': 0}, 'base_fingerprint': current['base_fingerprint']})
+        with patch('requests.Session.request', side_effect=AssertionError('Unrequested network')):
+            response = self.app.test_client().post(f'/api/tools/ai/{identifier}/save', json={
+                'confirm': 'confirmed-proposal', 'fields': {'reading': 'かくうのさくひん'}})
+        self.assertEqual(response.status_code, 200, response.json)
+        followups = self.app.extensions['maintenance_ops'].followups
+        choice = followups.choice(response.json['komga_followup'])
+        self.assertEqual(choice['series_ids'], [self.row['local_id']])
+        self.assertEqual(choice['fields'], ['reading'])
+        self.assertEqual(self.book.read_bytes(), self.original)
+
     def test_page_preview_waits_and_deduplicates_without_changing_the_archive(self):
         editor = self.app.extensions['page_editor']
         review = editor.review(self.book_id)

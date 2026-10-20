@@ -25,7 +25,7 @@
       {% if row.state in ['review','missing','error'] %}<div class="enrichment-actions"><a class="button" href="{{ url_for('metadata.metadata_sources', series_id=row.series_id, provider=result.provider, batch=batch.id) }}">候補を個別に確認</a><a class="text-link" href="{{ url_for('metadata.metadata_detail', series_id=row.series_id) }}">管理で手動修正</a></div>{% endif %}
     </article>
     {% endfor %}
-    {% if result.counts.ready and saved is none %}<div class="section"><p>上の{{ result.counts.ready }}作品の{{ '書誌対応' if result.link_only else '空欄' }}を保存します。Komgaへの反映は管理の「Komgaへの反映」で確認できます。</p><button class="button primary" id="enrichment-apply" data-job-id="{{ batch.id }}" data-confirm="{{ result.digest }}">{{ result.counts.ready }}作品の{{ '書誌対応' if result.link_only else '不足情報' }}をまとめて保存</button></div>{% endif %}
+    {% if result.counts.ready and saved is none %}<div class="section"><p>上の{{ result.counts.ready }}作品の{{ '書誌対応' if result.link_only else '空欄' }}を保存します。保存後、補完した作品のKomga反映へ続けて進めます。</p><button class="button primary" id="enrichment-apply" data-job-id="{{ batch.id }}" data-confirm="{{ result.digest }}">{{ result.counts.ready }}作品の{{ '書誌対応' if result.link_only else '不足情報' }}をまとめて保存</button></div>{% endif %}
   {% else %}<div class="notice warning">{{ batch.error or '候補の取得を完了できませんでした。対象を選び直して再実行してください。' }}</div>{% endif %}
 </section>
 {% endif %}

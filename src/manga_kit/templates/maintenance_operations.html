@@ -1,9 +1,25 @@
 {% extends 'base.html' %}
 {% block title %}Komgaへの反映{% endblock %}
 {% block scripts %}<script src="{{ asset_url('tools.js') }}" defer></script>{% endblock %}
-{% block content %}<div class="page-heading"><div><p class="eyebrow">LIBRARY MAINTENANCE</p><h1>Komgaへの反映</h1><p>補完・手動修正した作品情報、著者、完結タグと連載状態を確認して反映します。</p></div></div>
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">KOMGA SYNC</p><h1>{{ 'この処理の内容をKomgaへ反映' if followup else 'Komgaへまとめて反映' }}</h1>
+  {% if followup %}<p>保存・整理した作品が対象です。変更内容を確認してから反映できます。</p>{% else %}<p>全作品の情報をまとめて確認するときに使います。普段は補完・修正・移動の完了後から、その作品の反映へ進めます。</p>{% endif %}
+</div>{% if followup %}<a class="button" href="{{ followup.return_url }}">処理結果へ戻る</a>{% endif %}</div>
 <div id="tool-status" class="notice section" role="status" hidden></div>
-<form id="tool-komga-sync" class="panel tool-facts"><label>反映する情報<select name="mode"><option value="metadata">作品情報・読み・タグ</option><option value="authors">巻の著者</option><option value="completion">完結タグ・連載状態</option></select></label><fieldset><legend>作品情報の項目</legend>{% for key in ['title','reading','publisher','summary','genres','tags'] %}<label><input type="checkbox" name="fields" value="{{ key }}" checked>{{ metadata_labels[key] }}</label>{% endfor %}</fieldset><label><input type="checkbox" name="overwrite">Komgaに既にある値も変更する</label><label><input type="checkbox" name="replace_locked">ロック済みの項目も変更する</label><label><input type="checkbox" name="replace_lists">タグ・ジャンル・著者の一覧を置き換える</label><button class="button primary">全作品の差分を確認</button><p class="form-hint">既定は空欄の補完・一覧への追加です。ロック済みの値を保護します。</p></form>
-{% if operation %}<section class="panel section"><h2>確認した変更内容</h2><p>状態: {{ operation.status }}</p>{% if operation.plan.entries %}{% for entry in operation.plan.entries %}<p><code>{{ entry.source }}</code> → <code>{{ entry.target }}</code></p>{% endfor %}{% else %}{% for target in operation.plan.targets %}<h3>{{ target.series_title }}</h3>{% for change in target.changes %}<p>{{ metadata_labels.get(change.field,change.field) }}: {{ change.before }} → {{ change.after }}</p>{% endfor %}{% endfor %}{% for item in operation.plan.skipped %}<p class="warning-text">{{ item.series_title }}: {{ item.reason }}</p>{% endfor %}{% endif %}
-{% if operation.status == 'planned' %}<button class="button primary" data-tool-action="/api/tools/maintenance/{{ operation.plan.id }}/execute" data-payload="{{ {'confirm':operation.digest}|tojson|forceescape }}">確認した変更を実行</button>{% elif operation.status in ['completed','failed','running','restoring'] %}<button class="button" data-tool-action="/api/tools/maintenance/{{ operation.plan.id }}/restore" data-payload="{{ {'confirm':operation.digest}|tojson|forceescape }}">元に戻す</button>{% endif %}</section>{% endif %}
+{% if operation %}
+<section class="panel section" id="komga-changes"><h2>確認した変更内容</h2><p>状態: {{ {'planned':'反映前','running':'反映中','completed':'反映済み','restored':'復元済み','failed':'中断','restoring':'復元中'}.get(operation.status,operation.status) }}</p>
+  {% for target in operation.plan.targets %}<h3>{{ target.series_title }}</h3>{% for change in target.changes %}<p>{{ metadata_labels.get(change.field,change.field) }}: {{ change.before|join(' / ') if change.before is iterable and change.before is not string and change.before is not mapping else change.before }} → {{ change.after|join(' / ') if change.after is iterable and change.after is not string and change.after is not mapping else change.after }}</p>{% endfor %}{% endfor %}
+  {% for item in operation.plan.skipped %}<p class="warning-text">{{ item.series_title }}: {{ item.reason }}</p>{% endfor %}
+  {% if operation.status == 'planned' %}<button class="button primary" data-tool-action="/api/tools/maintenance/{{ operation.plan.id }}/execute" data-payload="{{ {'confirm':operation.digest}|tojson|forceescape }}">確認した変更をKomgaへ反映</button>{% elif operation.status in ['completed','failed','running','restoring'] %}<button class="button" data-tool-action="/api/tools/maintenance/{{ operation.plan.id }}/restore" data-payload="{{ {'confirm':operation.digest}|tojson|forceescape }}">反映前に戻す</button>{% endif %}
+</section>
+{% endif %}
+<details class="panel section"{% if not operation %} open{% endif %}><summary>{{ '反映設定を変えて差分を確認し直す' if operation else '反映する情報と方法' }}</summary>
+<form id="tool-komga-sync" class="tool-facts"{% if followup %} data-followup="{{ followup.id }}"{% endif %}>
+  <label>反映する情報<select name="mode">{% for key,label in [('metadata','作品情報・読み・タグ'),('authors','巻の著者'),('completion','完結タグ・連載状態')] %}{% if not followup or followup.choices|selectattr('mode','equalto',key)|list %}<option value="{{ key }}"{% if (choice and choice.mode == key) or (not choice and key == 'metadata') %} selected{% endif %}>{{ label }}{% if followup %}{% set selected = followup.choices|selectattr('mode','equalto',key)|first %}（{{ selected.series_ids|length }}作品）{% endif %}</option>{% endif %}{% endfor %}</select></label>
+  <fieldset data-metadata-fields><legend>作品情報の項目</legend>{% for key in available_fields %}<label><input type="checkbox" name="fields" value="{{ key }}" checked>{{ metadata_labels[key] }}</label>{% endfor %}</fieldset>
+  <label data-metadata-overwrite><input type="checkbox" name="overwrite">Komgaに既にある値も修正する</label>
+  <details><summary>ロックと一覧の扱い</summary><label><input type="checkbox" name="replace_locked">ロック済みの項目も変更する</label><label><input type="checkbox" name="replace_lists">タグ・ジャンル・著者の一覧を置き換える</label></details>
+  <button class="button primary">{{ 'この処理の対象作品' if followup else '全作品' }}の差分を確認</button>
+  <p class="form-hint">既定は空欄の補完・一覧への追加です。ロック済みの値を保護します。</p>
+</form></details>
 {% endblock %}

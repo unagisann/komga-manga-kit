@@ -63,6 +63,22 @@ class AutoEnrichmentTests(unittest.TestCase):
         return {p.relative_to(self.settings.library_root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in self.settings.library_root.rglob('*') if p.is_file()}
 
+    def test_saved_batch_offers_only_the_completed_rows_for_komga_sync(self):
+        self.app.extensions['preferences']._current = replace(self.settings, komga_url='http://isolated.invalid')
+        job = self.run_batch()
+        with patch('requests.Session.request', side_effect=AssertionError('Unrequested Komga write')):
+            response = self.apply(job)
+            self.assertEqual(response.status_code, 200, response.json)
+            identifier = response.json['komga_followup']
+            followups = self.app.extensions['maintenance_ops'].followups
+            choice = followups.choice(identifier, 'metadata')
+            ready = {row['series_id'] for row in job['result']['rows'] if row['state'] == 'ready' and row['preview']['changes']}
+            self.assertEqual(set(choice['series_ids']), ready)
+            self.assertNotIn(self.entries[2].id, choice['series_ids'])
+            html = self.client.get(f'/metadata?batch={job["id"]}&followup={identifier}').get_data(as_text=True)
+            self.assertIn('Komgaにも反映しますか？', html)
+            self.assertEqual(self.apply(job).json['komga_followup'], identifier)
+
     def test_collect_is_read_only_and_save_fills_only_missing_fields_once(self):
         before = self.files()
         job = self.run_batch()

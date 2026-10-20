@@ -207,7 +207,9 @@ class AIAssist:
                 changes = [{"series_id": series_id, "expected": applied[series_id], "edit": proposal["expected"]}]
             else:
                 if applied:
-                    return {"saved": True, "already_saved": True}
+                    status = self.store.cached("ai:status:" + identifier)
+                    return {"saved": True, "already_saved": True, "series_id": series_id,
+                            "changes": status["data"].get("changes", []) if status else []}
                 if not isinstance(fields, dict) or not fields or set(fields) - proposal["fields"].keys():
                     raise ConfigError("提案された項目を選んで保存してください。")
                 selected = validate_fields(fields)
@@ -220,5 +222,6 @@ class AIAssist:
                 changes = [{"series_id": series_id, "expected": proposal["expected"],
                             "edit": {"fields": preview["fields"], "provenance": stored_links(links)}}]
             self.store.apply_operation_edits(identifier, "ai_restore" if restore else "ai_apply", changes, event_kind="ai_metadata")
-            self.store.cache("ai:status:" + identifier, {"status": "restored" if restore else "saved"})
-        return {"saved": True, "restored": restore}
+            changed_items = [] if restore else preview["changes"]
+            self.store.cache("ai:status:" + identifier, {"status": "restored" if restore else "saved", "changes": changed_items})
+        return {"saved": True, "restored": restore, "series_id": series_id, "changes": changed_items}

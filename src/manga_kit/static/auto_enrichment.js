@@ -56,7 +56,12 @@
     const button = event.currentTarget;
     if (button.disabled) return;
     button.disabled = true; errorBox.hidden = true;
-    try { await post(`/api/enrichment/batches/${encodeURIComponent(button.dataset.jobId)}/apply`, {confirm: button.dataset.confirm}); location.reload(); }
+    try {
+      const saved = await post(`/api/enrichment/batches/${encodeURIComponent(button.dataset.jobId)}/apply`, {confirm: button.dataset.confirm});
+      const next = new URL(location.href); next.searchParams.delete('followup');
+      if (saved.komga_followup) next.searchParams.set('followup',saved.komga_followup);
+      location.assign(next.pathname+next.search);
+    }
     catch (error) { showError(error.message); button.disabled = false; }
   });
 })();

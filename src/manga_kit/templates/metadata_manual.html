@@ -8,5 +8,5 @@
 {% for series in entries %}<tr><td>{{ series.title }}<span class="cell-secondary">{{ series.author or '著者未設定' }}</span></td><td>{{ series.reading or '未設定' }}</td><td><a class="text-link" href="{{ url_for('metadata.metadata_detail', series_id=series.id) }}">情報を修正</a></td></tr>{% else %}<tr><td colspan="3" class="empty-state">該当する作品がありません。</td></tr>{% endfor %}
 </tbody></table></div></section>
 {{ ui.pagination(pagination) }}
-<details class="panel section"><summary>書庫から読み取る情報について</summary><p class="muted">ComicInfo.xmlとseries.jsonから作品情報を読み取ります。ここで修正した内容は、このツールの表示・検索・整理計画に使います。Komgaへの反映はCLIで別途確認します。</p></details>
+<details class="panel section"><summary>書庫から読み取る情報について</summary><p class="muted">ComicInfo.xmlとseries.jsonから作品情報を読み取ります。ここで修正した内容は、このツールの表示・検索・整理計画に使います。保存後、その作品のKomga反映へ続けて進めます。</p></details>
 {% endblock %}

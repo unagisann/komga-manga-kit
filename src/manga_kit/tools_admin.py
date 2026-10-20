@@ -95,7 +95,10 @@ def ai_action(identifier, action):
         raise ConfigError("保存または復元を指定してください。")
     require_admin_access()
     body = body_with_keys({"confirm", "fields"}, {"confirm"})
-    return jsonify(current_app.extensions["ai_assist"].save(identifier, body["confirm"], body.get("fields"), restore=action == "restore"))
+    result = current_app.extensions["ai_assist"].save(identifier, body["confirm"], body.get("fields"), restore=action == "restore")
+    from .web import saved_komga_followup
+    return jsonify(saved_komga_followup(result, {result["series_id"]: result["changes"]}, "ai:" + identifier + ":" + action,
+                   url_for("maintenance.ai")))
 
 
 # Review marks shown with the existing Tools wording: done, skipped (kept as hold) and everything else to do.
@@ -293,14 +296,20 @@ def completion():
 def komga_sync():
     service = current_app.extensions["maintenance_ops"]
     identifier = request.args.get("plan")
+    followup_id = request.args.get("followup")
+    followup = service.followups.inspect(followup_id) if followup_id else None
+    choice = service.followups.choice(followup_id, request.args.get("mode")) if followup else None
+    from .komga_followup import METADATA_FIELDS
+    available = next((item["fields"] for item in followup["choices"] if item["mode"] == "metadata"), []) if followup else METADATA_FIELDS
     return render_template("maintenance_operations.html", kind="komga", rows=[],
-                           operation=service.inspect(identifier) if identifier else None)
+                           operation=service.inspect(identifier) if identifier else None, followup=followup, choice=choice,
+                           available_fields=available)
 
 
 @maintenance.post("/api/tools/maintenance/<kind>/preview")
 def maintenance_preview(kind):
     require_admin_access()
-    body = body_with_keys({"mode", "series_ids", "fields", "overwrite", "replace_locked", "replace_lists"})
+    body = body_with_keys({"mode", "series_ids", "fields", "overwrite", "replace_locked", "replace_lists", "followup"})
     service = current_app.extensions["maintenance_ops"]
     job = current_app.extensions["jobs"].submit_task("maintenance_preview", lambda progress: service.prepare(kind, **body), key=[kind, body])
     return jsonify(current_app.extensions["state"].job(job)), 202

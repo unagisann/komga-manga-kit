@@ -157,7 +157,12 @@
     saving = true; $('#source-save').disabled = true; $('#source-error').hidden = true;
     const controls = Array.from(root.querySelectorAll('input, textarea, button'), (element) => [element, element.disabled]);
     controls.forEach(([element]) => { element.disabled = true; });
-    try { await post(`${base}/source`, pending); location.assign(root.dataset.returnUrl); }
+    try {
+      const saved = await post(`${base}/source`, pending);
+      const next = new URL(root.dataset.returnUrl,location.origin);
+      if (saved.komga_followup) next.searchParams.set('followup',saved.komga_followup);
+      location.assign(next.pathname+next.search);
+    }
     catch (reason) { error(reason.message); pending = null; controls.forEach(([element, disabled]) => { element.disabled = disabled; }); $('#source-save').disabled = true; }
     finally { saving = false; }
   });

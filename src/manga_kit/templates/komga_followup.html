@@ -1,0 +1,10 @@
+<section class="panel section" id="komga-followup" data-id="{{ komga_followup.id }}" aria-labelledby="komga-followup-heading">
+  <h2 id="komga-followup-heading">Komgaにも反映しますか？</h2>
+  <p>この処理は完了しました。続けて、保存・整理した作品の反映内容を確認できます。</p>
+  <div class="settings-actions">{% for item in komga_followup.choices %}
+    <button class="button primary" type="button" data-komga-followup-mode="{{ item.mode }}">{{ item.label }}の差分を確認（{{ item.series_ids|length }}作品）</button>
+    <a class="text-link" href="{{ url_for('maintenance.komga_sync',followup=komga_followup.id,mode=item.mode) }}">{{ item.label }}の反映設定</a>
+  {% endfor %}</div>
+  <p class="form-hint">既定は空欄の補完と一覧への追加です。既存の値も修正する場合は反映設定で選べます。差分を確認し、実行するまでKomgaは変更しません。</p>
+  <p data-followup-status role="status" hidden></p>
+</section>

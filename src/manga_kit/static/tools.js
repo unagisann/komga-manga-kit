@@ -28,11 +28,16 @@
       if (['queued','running'].includes(job.status)) showJob(job);
     }
     if (job.status !== 'succeeded') throw new Error(job.error || '処理を完了できませんでした。');
-    if (reviewUrl) {
-      const response = await fetch(`/api/jobs/${encodeURIComponent(job.id)}/result`);
-      if (!response.ok) throw new Error('結果を確認できませんでした。処理の詳細から確認できます。');
-      const result = await response.json();
-      if (result.plan) { location.href = reviewUrl+'?plan='+encodeURIComponent(result.plan.id); return; }
+    const response = await fetch(`/api/jobs/${encodeURIComponent(job.id)}/result`);
+    if (!response.ok) throw new Error('結果を確認できませんでした。処理の詳細から確認できます。');
+    const result = await response.json();
+    if (reviewUrl && result.plan) {
+      const next = new URL(reviewUrl,location.origin); next.searchParams.set('plan',result.plan.id);
+      location.assign(next.pathname+next.search); return;
+    }
+    if (result.komga_followup) {
+      const next = new URL(location.href); next.searchParams.set('followup',result.komga_followup);
+      location.assign(next.pathname+next.search); return;
     }
     location.reload();
   };
@@ -68,7 +73,7 @@
       catch(error) { show(error.message); }
     });
   });
-  document.querySelectorAll('.tool-facts').forEach(form => form.addEventListener('submit',async event => {
+  document.querySelectorAll('.tool-facts[data-series]').forEach(form => form.addEventListener('submit',async event => {
     event.preventDefault();
     const body = Object.fromEntries(new FormData(form));
     body.revision = Number(form.dataset.revision);
@@ -95,16 +100,32 @@
   document.querySelectorAll('[data-check-all]').forEach(toggle => toggle.addEventListener('change', () => {
     toggle.closest('form').querySelectorAll('[name=series_ids]:not(:disabled)').forEach(input => { input.checked = toggle.checked; });
   }));
-  document.querySelector('#tool-komga-sync')?.addEventListener('submit',async event => {
+  const syncForm = document.querySelector('#tool-komga-sync');
+  const updateSyncFields = () => {
+    if (!syncForm) return;
+    const metadata = syncForm.elements.mode.value === 'metadata';
+    syncForm.querySelector('[data-metadata-fields]').hidden = !metadata;
+    syncForm.querySelector('[data-metadata-overwrite]').hidden = !metadata;
+  };
+  syncForm?.elements.mode.addEventListener('change',updateSyncFields); updateSyncFields();
+  syncForm?.addEventListener('submit',async event => {
     event.preventDefault(); const form = event.target, mode = form.elements.mode.value;
     const body = {mode,replace_locked:form.elements.replace_locked.checked,replace_lists:form.elements.replace_lists.checked};
+    if (form.dataset.followup) body.followup = form.dataset.followup;
     if (mode === 'metadata') { body.fields = [...form.querySelectorAll('[name=fields]:checked')].map(input => input.value); body.overwrite = form.elements.overwrite.checked; }
-    try { await follow(await post('/api/tools/maintenance/komga/preview',body),'/komga-sync'); } catch(error) { show(error.message); }
+    const next = new URL('/komga-sync',location.origin);
+    if (body.followup) { next.searchParams.set('followup',body.followup); next.searchParams.set('mode',mode); }
+    try { await follow(await post('/api/tools/maintenance/komga/preview',body),next.pathname+next.search); } catch(error) { show(error.message); }
   });
   document.querySelectorAll('.tool-ai-proposal').forEach(form => form.addEventListener('submit',async event => {
     event.preventDefault(); const fields = {};
     form.querySelectorAll('[name=selected]:checked').forEach(input => fields[input.value] = input.value === 'genres' ? form.elements[input.value].value.split('\n').map(value => value.trim()).filter(Boolean) : form.elements[input.value].value);
-    try { await post('/api/tools/ai/'+encodeURIComponent(form.dataset.id)+'/save',{confirm:form.dataset.confirm,fields}); location.reload(); }
+    try {
+      const saved = await post('/api/tools/ai/'+encodeURIComponent(form.dataset.id)+'/save',{confirm:form.dataset.confirm,fields});
+      const next = new URL(location.href); next.searchParams.delete('followup');
+      if (saved.komga_followup) next.searchParams.set('followup',saved.komga_followup);
+      location.assign(next.pathname+next.search);
+    }
     catch(error) { show(error.message); }
   }));
 })();

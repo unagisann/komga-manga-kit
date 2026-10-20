@@ -19,7 +19,7 @@
   <ul class="move-plan">{% for group in operation.plan.groups or [] %}<li><code>{{ group.source }}</code> → <code>{{ group.target }}</code></li>{% endfor %}</ul>
   {% if operation.status == 'planned' %}<button class="button primary" type="button" data-tool-action="/api/tools/maintenance/{{ operation.plan.id }}/execute" data-payload="{{ {'confirm': operation.digest}|tojson|forceescape }}">確認した移動を実行</button>
   {% elif operation.status in ['completed', 'failed', 'running', 'restoring'] %}<button class="button" type="button" data-tool-action="/api/tools/maintenance/{{ operation.plan.id }}/restore" data-payload="{{ {'confirm': operation.digest}|tojson|forceescape }}">元に戻す</button>{% endif %}
-  <p class="form-hint">移動後は「作品情報の反映」で、Komgaの完結タグ・連載状態を確認して反映できます。</p>
+  <p class="form-hint">移動完了後は、この作品のKomga情報や完結タグの反映へ続けて進めます。</p>
 </section>
 {% endif %}
 

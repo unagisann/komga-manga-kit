@@ -3,6 +3,7 @@ from pathlib import PurePosixPath
 
 from .config import ConfigError
 from .komga_batch import KomgaBatchService
+from .komga_followup import KomgaFollowups
 from .operations import OperationService
 from .state import timestamp
 
@@ -16,6 +17,7 @@ class MaintenanceOperations:
         self.settings, self.store, self.inventory = settings, store, inventory
         self.moves = OperationService(settings, store, client)
         self.batch = KomgaBatchService(settings, store, client)
+        self.followups = KomgaFollowups(settings, store)
 
     def candidates(self):
         """Series whose folder differs from where the organize rules place them; completed series are one case."""
@@ -46,6 +48,9 @@ class MaintenanceOperations:
                 raise ConfigError("整理ルールの場所と違う作品から、移動する対象を選んでください。")
             operation = self.moves.prepare(selected=identifiers)
         elif kind == "komga":
+            if "followup" in body:
+                identifier = body.pop("followup")
+                body = self.followups.scope(identifier, body)
             if set(body) - {"mode", "series_ids", "fields", "overwrite", "replace_locked", "replace_lists"}:
                 raise ConfigError("Komga反映の項目を確認してください。")
             operation = self.batch.prepare(**body)
@@ -67,5 +72,11 @@ class MaintenanceOperations:
         service = self.moves if record["data"]["kind"] in MOVE_KINDS else self.batch
         operation = service.restore(identifier, confirm) if restore else service.execute(identifier, confirm)
         self.inventory.refresh()
+        followup = None
+        if record["data"]["kind"] in MOVE_KINDS and not restore and operation["status"] == "completed":
+            target_ids = {group["target_id"] for group in operation["plan"]["groups"]}
+            followup = self.followups.moved("move:" + identifier, self.inventory.library.scan().series,
+                                            target_ids, "/moves?plan=" + identifier)
         return {"operation_id": identifier, "kind": record["data"]["kind"], "status": operation["status"], "files": operation.get("moved_count", 0),
+                "komga_followup": followup,
                 "series": len(operation["plan"].get("targets", operation["plan"].get("groups", [])))}

@@ -119,7 +119,10 @@ def create_app(config_path=None, *, settings=None, features=None):
         if selected is None:
             selected = next((item.endpoint for item in registry if item.id == active), None)
         tab = management_tab(request.endpoint)
+        followup_id = request.args.get("followup") if request.endpoint != "maintenance.komga_sync" else None
+        followup = app.extensions["maintenance_ops"].followups.inspect(followup_id) if followup_id else None
         return {"settings": settings, "features": registry, "navigation": navigation,
+                "komga_followup": followup,
                 "active_navigation": selected, "version": __version__,
                 "management_tabs": MANAGEMENT_TABS if tab else (), "management_tab": tab,
                 "metadata_labels": {"title": "作品名", "author": "著者", "reading": "読み", "publisher": "出版社",

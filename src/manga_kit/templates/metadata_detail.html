@@ -2,7 +2,7 @@
 {% block title %}{{ series.title }}の情報{% endblock %}
 {% block content %}
 <div class="page-heading"><div><p class="eyebrow">MANUAL CORRECTION</p><h1>{{ series.title }}の情報を修正</h1><p>自動補完で取得できなかった項目や、誤っている情報を修正します。</p></div><a class="button" href="{{ url_for('management.metadata') }}">手動修正の一覧へ</a></div>
-<div class="notice">保存した情報は再起動後も使えます。この画面の保存は本棚の作品情報に反映します。Komgaへの反映はCLIで項目と差分を確認して実行できます。</div>
+<div class="notice">保存すると、このツールの作品情報に反映します。続けて「Komgaにも反映しますか？」から、差分を確認して反映できます。</div>
 <section class="panel section">
   <div class="panel-heading"><h2>外部の作品情報</h2><a class="button" href="{{ url_for('metadata.metadata_sources', series_id=series.id) }}">候補を探す・対応付けを確認</a></div>
   <p class="muted">楽天Booksで書誌情報、AniListでタグ・ジャンルを補えます。</p>

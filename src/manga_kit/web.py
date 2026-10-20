@@ -50,12 +50,14 @@ def normalization_index():
         action = active[0]
     items, paging = paginate(job["result"]["items"], size=20) if job and job["result"] else ([], None)
     scope = (job.get("result") or {}).get("scope") if job else None
+    followup_id = (action.get("result") or {}).get("komga_followup") if action and action["status"] == "succeeded" else None
+    followup_context = {"komga_followup": current_app.extensions["maintenance_ops"].followups.inspect(followup_id)} if followup_id else {}
     return render_template("normalize.html", check=job, operation=operation, action=action, busy=bool(active),
                            items=items, pagination=paging, target_libraries=service.targets.libraries(),
                            target_scope=scope or {"library": request.args.get("library", "all"),
                                "subpath": request.args.get("subpath", ""),
                                "limit": request.args.get("limit", configuration().max_files),
-                               "recheck": request.args.get("recheck") == "true"})
+                               "recheck": request.args.get("recheck") == "true"}, **followup_context)
 
 
 def require_normalization_execution():
@@ -418,6 +420,8 @@ def job_detail(job_id):
     if job is None:
         raise NotFound()
     context = plan_view(job["result"]) if job["kind"] == "preview" and job["result"] else {}
+    if job["status"] == "succeeded" and (job["result"] or {}).get("komga_followup"):
+        context["komga_followup"] = current_app.extensions["maintenance_ops"].followups.inspect(job["result"]["komga_followup"])
     return render_template("job_detail.html", job=job, **context)
 
 
@@ -540,8 +544,10 @@ def metadata_save(series_id):
     body = body_with_keys({"fields", "reset", "revision", "base_fingerprint"}, {"revision", "base_fingerprint"})
     if type(body.get("reset", False)) is not bool:
         raise ConfigError("reset は true / false で指定してください。")
-    return jsonify(metadata_service().save(series_id, body.get("fields"), body["revision"], body["base_fingerprint"],
-                                          reset=body.get("reset", False)))
+    result = metadata_service().save(series_id, body.get("fields"), body["revision"], body["base_fingerprint"],
+                                     reset=body.get("reset", False))
+    return jsonify(saved_komga_followup(result, {series_id: result["changes"]},
+                   f"manual:{series_id}:{result['revision']}", url_for("metadata.metadata_detail", series_id=series_id)))
 
 
 @api.post("/metadata/<series_id>/search")
@@ -560,7 +566,10 @@ def source_preview(series_id):
 def source_save(series_id):
     body = body_with_keys({"search_id", "candidate_id", "fields", "unlink", "revision", "base_fingerprint", "provider"},
                           {"revision", "base_fingerprint"})
-    return jsonify(current_app.extensions["enrichment"].save(series_id, **body))
+    result = current_app.extensions["enrichment"].save(series_id, **body)
+    return jsonify(saved_komga_followup(result, {series_id: result["changes"]},
+                   f"source:{series_id}:{result['revision']}", url_for("metadata.metadata_sources", series_id=series_id,
+                   provider=body.get("provider", "rakuten_books"))))
 
 
 @api.post("/enrichment/batches")
@@ -573,7 +582,16 @@ def enrichment_batch():
 @api.post("/enrichment/batches/<job_id>/apply")
 def apply_enrichment_batch(job_id):
     body = body_with_keys({"confirm"}, {"confirm"})
-    return jsonify(current_app.extensions["auto_enrichment"].apply(job_id, body["confirm"]))
+    result = current_app.extensions["auto_enrichment"].apply(job_id, body["confirm"])
+    batch = current_app.extensions["state"].job(job_id, include_result=True)["result"]
+    changes = {row["series_id"]: row["preview"]["changes"] for row in batch["rows"] if row["state"] == "ready"}
+    return jsonify(saved_komga_followup(result, changes, "enrichment:" + job_id,
+                   url_for("metadata.index", batch=job_id, provider=batch["provider"])))
+
+
+def saved_komga_followup(result, changes, source, back_url):
+    identifier = current_app.extensions["maintenance_ops"].followups.create(source, changes, back_url)
+    return {**result, "komga_followup": identifier}
 
 
 def pagination():

@@ -354,6 +354,10 @@ class NormalizationService:
         normalized = self.library.scan(refresh=True, reuse_metadata=True)
         self._remember(result, operation, normalized)
         output = {"operation_id": operation["plan"]["id"], "status": operation["status"], "files": operation["moved_count"]}
+        from .komga_followup import KomgaFollowups
+        output["komga_followup"] = KomgaFollowups(self.settings, self.store).moved(
+            "normalize:" + operation["plan"]["id"], normalized.series,
+            {group["target_id"] for group in operation["plan"]["groups"]}, "/normalize?check=" + job_id)
         if getattr(self, "after_execute", None):
             try:
                 output["post_import_job"] = self.after_execute()

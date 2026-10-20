@@ -133,4 +133,4 @@ class MetadataService:
             detail["source_provider"] = source_provider
         updated = self.store.save_edit(series_id, preview["fields"], revision, detail,
                                        provenance=provenance)
-        return {**self.inspect(series_id), "revision": updated}
+        return {**self.inspect(series_id), "revision": updated, "changes": preview["changes"]}

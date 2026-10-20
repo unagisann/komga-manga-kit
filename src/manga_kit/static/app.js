@@ -171,7 +171,12 @@
     save.addEventListener('click', async () => {
       if (!pending) return;
       save.disabled = true; errorBox.hidden = true;
-      try { await post(`/api/metadata/${encodeURIComponent(editor.dataset.seriesId)}`, pending); location.reload(); }
+      try {
+        const saved = await post(`/api/metadata/${encodeURIComponent(editor.dataset.seriesId)}`, pending);
+        const next = new URL(location.href); next.searchParams.delete('followup');
+        if (saved.komga_followup) next.searchParams.set('followup',saved.komga_followup);
+        location.assign(next.pathname+next.search);
+      }
       catch (error) { pending = null; errorBox.textContent = error.message; errorBox.hidden = false; }
     });
   }
